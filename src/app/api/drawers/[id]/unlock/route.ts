@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { after } from "next/server";
 import { audit, db, id as newId, seed } from "@/lib/store";
 import {
   LIMITS,
@@ -14,7 +13,6 @@ import { drawerView } from "@/lib/dto";
 import { deviceOpen, issueUnlockCommand } from "@/lib/lock";
 import {
   noteLocalLock,
-  pingSheets,
   setSheetLockEvent,
   setSheetLocked,
   sheetsEnabled,
@@ -77,16 +75,22 @@ export async function POST(
     return NextResponse.json({ error: "drawer_disabled" }, { status: 409 });
   }
 
-  // Don't block unlock on Sheets — stock/authz use in-memory SoT.
   // Never pull inventory here: a stale pull racing a take/lock overwrites qty.
-  if (sheetsEnabled()) void pingSheets();
-
   if (db.openDrawer.has(drawer.id)) {
     const stock = db.stock.get(drawer.id)!;
     noteLocalLock(drawer.id, false);
-    after(() => {
-      void setSheetLocked(drawer, false);
-    });
+    if (sheetsEnabled()) {
+      try {
+        await setSheetLocked(drawer, false);
+      } catch (err) {
+        audit({
+          type: "sheets.lock_error",
+          userId: user.id,
+          drawerId: drawer.id,
+          detail: String(err),
+        });
+      }
+    }
     const payload = { ok: true, locked: false, drawer: drawerView(drawer, stock) };
     saveIdempotent(user.id, idempotencyKey, payload);
     return NextResponse.json(payload);
@@ -138,19 +142,28 @@ export async function POST(
 
   const trackerName = session.displayName;
   const trackerSessionId = session.trackerSessionId;
-  after(() => {
-    void setSheetLockEvent(drawer, false, {
-      name: trackerName,
-      sessionId: trackerSessionId,
-      action: "Unlock",
-      part: partName,
-      shelf: drawer.label,
-      quantity: 0,
-      locked: false,
-      teamNumber: session.teamNumber,
-      roboticsLevel: session.roboticsLevel,
-    });
-  });
+  if (sheetsEnabled()) {
+    try {
+      await setSheetLockEvent(drawer, false, {
+        name: trackerName,
+        sessionId: trackerSessionId,
+        action: "Unlock",
+        part: partName,
+        shelf: drawer.label,
+        quantity: 0,
+        locked: false,
+        teamNumber: session.teamNumber,
+        roboticsLevel: session.roboticsLevel,
+      });
+    } catch (err) {
+      audit({
+        type: "sheets.lock_tx_error",
+        userId: user.id,
+        drawerId: drawer.id,
+        detail: String(err),
+      });
+    }
+  }
 
   return NextResponse.json(payload);
 }

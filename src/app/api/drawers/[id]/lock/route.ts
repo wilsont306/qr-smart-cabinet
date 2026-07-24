@@ -1,12 +1,10 @@
 import { NextResponse } from "next/server";
-import { after } from "next/server";
 import { audit, db, seed } from "@/lib/store";
 import { LIMITS, canAccessDrawer } from "@/lib/security";
 import { currentSession } from "@/lib/session";
 import { drawerView } from "@/lib/dto";
 import {
   noteLocalLock,
-  pingSheets,
   setSheetLockEvent,
   setSheetLocked,
   sheetsEnabled,
@@ -18,23 +16,18 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   seed();
-  const { id: raw } = await params;
+  const { id: key } = await params;
+
   const visit = await currentSession();
   if (!visit) return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   const user = visit.user;
-  if (!visit.trackerSessionId) {
-    return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
-  }
 
-  const key = decodeURIComponent(raw).trim();
   const drawerId =
     db.drawers.get(key)?.id ?? db.drawersByShortCode.get(key.toUpperCase());
   const drawer = drawerId ? db.drawers.get(drawerId) : undefined;
   if (!drawer || !canAccessDrawer(user.id, drawer.id)) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
-
-  if (sheetsEnabled()) void pingSheets();
 
   const stock = db.stock.get(drawer.id)!;
   const item = db.items.get(drawer.itemId);
@@ -43,9 +36,18 @@ export async function POST(
   if (!openSessionId) {
     // Already locked in-app — still mirror Is Locked onto the inventory sheet.
     noteLocalLock(drawer.id, true);
-    after(() => {
-      void setSheetLocked(drawer, true);
-    });
+    if (sheetsEnabled()) {
+      try {
+        await setSheetLocked(drawer, true);
+      } catch (err) {
+        audit({
+          type: "sheets.lock_error",
+          userId: user.id,
+          drawerId: drawer.id,
+          detail: String(err),
+        });
+      }
+    }
     return NextResponse.json({ ok: true, locked: true, drawer: drawerView(drawer, stock) });
   }
 
@@ -64,24 +66,33 @@ export async function POST(
   audit({ type: "lock.relocked_by_user", userId: user.id, drawerId: drawer.id });
 
   const qtyLogged = unlockSession?.quantity || 0;
-  after(() => {
-    void setSheetLockEvent(
-      drawer,
-      true,
-      {
-        name: visit.displayName,
-        sessionId: visit.trackerSessionId!,
-        action: "Lock",
-        part: partName,
-        shelf: drawer.label,
-        quantity: qtyLogged,
-        locked: true,
-        teamNumber: visit.teamNumber,
-        roboticsLevel: visit.roboticsLevel,
-      },
-      "update",
-    );
-  });
+  if (sheetsEnabled()) {
+    try {
+      await setSheetLockEvent(
+        drawer,
+        true,
+        {
+          name: visit.displayName,
+          sessionId: visit.trackerSessionId!,
+          action: "Lock",
+          part: partName,
+          shelf: drawer.label,
+          quantity: qtyLogged,
+          locked: true,
+          teamNumber: visit.teamNumber,
+          roboticsLevel: visit.roboticsLevel,
+        },
+        "update",
+      );
+    } catch (err) {
+      audit({
+        type: "sheets.lock_tx_error",
+        userId: user.id,
+        drawerId: drawer.id,
+        detail: String(err),
+      });
+    }
+  }
 
   return NextResponse.json({ ok: true, locked: true, drawer: drawerView(drawer, stock) });
 }

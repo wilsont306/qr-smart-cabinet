@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { after } from "next/server";
 import { audit, db, id as newId, seed } from "@/lib/store";
 import {
   LIMITS,
@@ -13,7 +12,6 @@ import { currentSession } from "@/lib/session";
 import { drawerView } from "@/lib/dto";
 import {
   noteLocalStock,
-  pingSheets,
   setSheetTransaction,
   sheetsEnabled,
 } from "@/lib/sheets";
@@ -95,11 +93,7 @@ export async function POST(
     return NextResponse.json({ error: "drawer_disabled" }, { status: 409 });
   }
 
-  // Don't stall take/return on a cold script — mutate local SoT, mirror in after().
   // Never pull inventory mid-mutation: that races quantity/lock writes.
-  // Wake Apps Script during this request so the after() write hits a warm script.
-  if (sheetsEnabled()) void pingSheets();
-
   const stock = db.stock.get(drawer.id)!;
 
   // Version skew across Fluid isolates is expected with the in-memory store.
@@ -188,29 +182,39 @@ export async function POST(
   };
   saveIdempotent(user.id, idempotencyKey, payload);
 
-  // Mirror to the sheet after the response — stock + ledger are already committed.
+  // Mirror to the sheet before responding so Vercel can't freeze the isolate
+  // mid-write. Sheets API is typically 200–800ms; Apps Script may be slower.
   // If the drawer is already open, UPDATE the Unlock row → "Unlock + Take/Return"
-  // instead of appending a second tracker line (which often failed under load).
+  // instead of appending a second tracker line.
   const qtyAfter = stock.quantity;
   const sessionAction: "append" | "update" = drawerOpen ? "update" : "append";
-  after(() => {
-    void setSheetTransaction(
-      drawer,
-      qtyAfter,
-      {
-        name: trackerName,
-        sessionId: trackerSessionId,
-        action,
-        part: partName,
-        shelf: drawer.label,
-        quantity,
-        locked: !drawerOpen,
-        teamNumber: session.teamNumber,
-        roboticsLevel: session.roboticsLevel,
-      },
-      sessionAction,
-    );
-  });
+  if (sheetsEnabled()) {
+    try {
+      await setSheetTransaction(
+        drawer,
+        qtyAfter,
+        {
+          name: trackerName,
+          sessionId: trackerSessionId,
+          action,
+          part: partName,
+          shelf: drawer.label,
+          quantity,
+          locked: !drawerOpen,
+          teamNumber: session.teamNumber,
+          roboticsLevel: session.roboticsLevel,
+        },
+        sessionAction,
+      );
+    } catch (err) {
+      audit({
+        type: "sheets.tx_error",
+        userId: user.id,
+        drawerId: drawer.id,
+        detail: String(err),
+      });
+    }
+  }
 
   return NextResponse.json(payload);
 }

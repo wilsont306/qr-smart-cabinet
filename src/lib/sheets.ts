@@ -61,12 +61,17 @@ function enqueueSheetWrite(
   task: () => Promise<void>,
 ): Promise<void> {
   const prev = sheetWriteTails.get(key) ?? Promise.resolve();
-  const run = prev.then(task, task).then(
-    () => undefined,
-    () => undefined,
+  // Run after prior work for this key; surface this task's failure to the caller
+  // while keeping the queue alive for the next write.
+  const result = prev.then(task, task);
+  sheetWriteTails.set(
+    key,
+    result.then(
+      () => undefined,
+      () => undefined,
+    ),
   );
-  sheetWriteTails.set(key, run);
-  return run;
+  return result;
 }
 
 /** Nudge Apps Script awake before a mutation when it's been idle. */
