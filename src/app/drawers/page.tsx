@@ -219,7 +219,7 @@ function DrawersPageInner() {
     void fetch("/api/sheets/ping", { credentials: "same-origin", cache: "no-store" });
     const keepAlive = window.setInterval(() => {
       void fetch("/api/sheets/ping", { credentials: "same-origin", cache: "no-store" });
-    }, 3 * 60 * 1000);
+    }, 90 * 1000);
 
     void (async () => {
       // After check-in, force a sheet pull on THIS isolate before trusting seed stock.

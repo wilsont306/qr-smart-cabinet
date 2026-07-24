@@ -18,7 +18,7 @@ export async function GET() {
   // real Part/Quantity instead of seed placeholders (Refresh used to be required).
   let fresh = sheetsCacheFresh();
   if (sheetsEnabled() && !fresh) {
-    await pullStockFromSheets({ force: true, timeoutMs: 18000 });
+    await pullStockFromSheets({ force: true, timeoutMs: 10000 });
     fresh = sheetsCacheFresh();
   }
 

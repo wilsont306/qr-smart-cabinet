@@ -127,12 +127,12 @@ function doPost(e) {
 /** Serialize spreadsheet mutations across concurrent Web App executions. */
 function withDocLock_(fn) {
   var lock = LockService.getDocumentLock();
-  if (!lock.tryLock(30000)) {
+  // Short wait — long locks made rapid takes feel stuck on the sheet.
+  if (!lock.tryLock(8000)) {
     throw new Error('sheet_busy');
   }
   try {
     var result = fn();
-    // Flush before release so the next execution sees committed cells.
     SpreadsheetApp.flush();
     return result;
   } finally {
@@ -862,12 +862,13 @@ function findRowByNumber_(t, number) {
 }
 
 // Session tracker: Name | Team # | Robotics Level | Time | Session ID | Action | Part | Quantity | Locked? | Shelf
-function locateSessionTable_() {
+function locateSessionHeaders_() {
   var sheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
   for (var s = 0; s < sheets.length; s++) {
     var sheet = sheets[s];
     if (sheet.getLastRow() < 1 || sheet.getLastColumn() < 1) continue;
-    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    var width = sheet.getLastColumn();
+    var headers = sheet.getRange(1, 1, 1, width).getValues()[0];
     var col = {};
     for (var c = 0; c < headers.length; c++) {
       var h = String(headers[c]).trim().toLowerCase();
@@ -883,17 +884,33 @@ function locateSessionTable_() {
       else if (h === 'robotics level' || h === 'robotics le' || h === 'level' || h === 'program' || h === 'first program') col.level = c + 1;
     }
     if (col.name && col.sessionId && col.part && col.quantity && col.locked) {
-      var lastRow = sheet.getLastRow();
-      var width = sheet.getLastColumn();
-      // getRange(row, column, numRows, numColumns) — 3rd/4th are COUNTS.
-      var numDataRows = Math.max(0, lastRow - 1);
-      var rows = numDataRows > 0
-        ? sheet.getRange(2, 1, numDataRows, width).getValues()
-        : [];
-      return { sheet: sheet, headerRow: 1, col: col, rows: rows, width: width };
+      return { sheet: sheet, headerRow: 1, col: col, width: width };
     }
   }
   return null;
+}
+
+function locateSessionTable_() {
+  var meta = locateSessionHeaders_();
+  if (!meta) return null;
+  var lastRow = meta.sheet.getLastRow();
+  // Only scan the last 80 rows when updating — enough for unlock→take merge.
+  var maxScan = 80;
+  var numDataRows = Math.max(0, lastRow - 1);
+  var scanRows = Math.min(numDataRows, maxScan);
+  var startRow = lastRow - scanRows + 1;
+  if (startRow < 2) startRow = 2;
+  var rows = scanRows > 0
+    ? meta.sheet.getRange(startRow, 1, scanRows, meta.width).getValues()
+    : [];
+  return {
+    sheet: meta.sheet,
+    headerRow: 1,
+    col: meta.col,
+    rows: rows,
+    width: meta.width,
+    rowOffset: startRow - 2, // 0-based index into full data → add to get sheet row
+  };
 }
 
 function formatTime_(isoOrEmpty) {
@@ -904,13 +921,12 @@ function formatTime_(isoOrEmpty) {
 }
 
 function appendSessionRow_(row) {
-  var t = locateSessionTable_();
+  // Headers only — don't read the whole tracker (slow as the log grows).
+  var t = locateSessionHeaders_();
   if (!t) throw new Error('No sheet with Name, Session ID, Part, Quantity, and Locked? headers found.');
 
-  // Always append after the true last row — don't trust a stale in-memory length.
   var sheetRow = Math.max(t.sheet.getLastRow() + 1, t.headerRow + 1);
   var actionLabel = row.actionLabel || '';
-  // One setValues write for the whole row beats 8 separate setValue calls.
   var arr = new Array(t.width).fill('');
   if (t.col.name) arr[t.col.name - 1] = row.name || '';
   if (t.col.time) arr[t.col.time - 1] = formatTime_(row.time);
@@ -960,7 +976,7 @@ function updateSessionRow_(row) {
     return appendSessionRow_(row);
   }
 
-  var sheetRow = t.headerRow + 1 + rowIdx;
+  var sheetRow = t.headerRow + 1 + (t.rowOffset || 0) + rowIdx;
   var actionLabel = row.actionLabel || '';
   // Edit the in-memory row, then write it back in a single setValues call.
   var arr = t.rows[rowIdx].slice();

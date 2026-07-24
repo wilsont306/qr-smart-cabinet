@@ -36,18 +36,30 @@ const recentLockHold = new Map<string, { locked: boolean; until: number }>();
 const recentStockHold = new Map<string, { quantity: number; until: number }>();
 
 /**
- * Serialize Apps Script writes on this isolate. Rapid unlock→take→lock must
- * land in order; parallel posts last-write-win on Quantity / Is Locked.
+ * Serialize Apps Script writes per drawer on this isolate. Different drawers
+ * can write in parallel; unlock→take on the same drawer stays ordered.
  */
-let sheetWriteTail: Promise<void> = Promise.resolve();
+const sheetWriteTails = new Map<string, Promise<void>>();
+let lastWarmAt = 0;
 
-function enqueueSheetWrite(task: () => Promise<void>): Promise<void> {
-  const run = sheetWriteTail.then(task, task).then(
+function enqueueSheetWrite(
+  key: string,
+  task: () => Promise<void>,
+): Promise<void> {
+  const prev = sheetWriteTails.get(key) ?? Promise.resolve();
+  const run = prev.then(task, task).then(
     () => undefined,
     () => undefined,
   );
-  sheetWriteTail = run;
+  sheetWriteTails.set(key, run);
   return run;
+}
+
+/** Nudge Apps Script awake before a mutation when it's been idle. */
+function warmSheetsIfIdle(): void {
+  if (Date.now() - lastWarmAt < 45_000) return;
+  lastWarmAt = Date.now();
+  void pingSheets();
 }
 
 export function noteLocalLock(drawerId: string, locked: boolean) {
@@ -167,13 +179,14 @@ async function postResult(
   payload: Record<string, unknown>,
   opts?: { timeoutMs?: number; retries?: number },
 ): Promise<{ ok: boolean; error?: string }> {
-  const retries = opts?.retries ?? 2;
-  const timeoutMs = opts?.timeoutMs ?? 45000;
+  // Keep writes snappy — long waits made the sheet feel "stuck" after takes.
+  const retries = opts?.retries ?? 1;
+  const timeoutMs = opts?.timeoutMs ?? 12000;
   let lastError = "fetch_failed";
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
-      await new Promise((r) => setTimeout(r, 400 * attempt));
+      await new Promise((r) => setTimeout(r, 250 * attempt));
     }
     const res = await postToSheets(payload, { timeoutMs });
     if (!res) {
@@ -191,7 +204,10 @@ async function postResult(
         }
         return { ok: false, error: body.error };
       }
-      if (res.ok || res.status === 200) return { ok: true };
+      if (res.ok || res.status === 200) {
+        lastWarmAt = Date.now();
+        return { ok: true };
+      }
       lastError = `http_${res.status}`;
     } catch {
       lastError = "invalid_json";
@@ -260,7 +276,8 @@ export async function logSessionRow(
   action: "append" | "update" = "append",
 ): Promise<void> {
   if (!sheetsEnabled()) return;
-  await enqueueSheetWrite(async () => {
+  await enqueueSheetWrite(row.shelf || "session", async () => {
+    warmSheetsIfIdle();
     await postSessionRow(row, action);
   });
 }
@@ -508,7 +525,8 @@ export async function setSheetQuantity(
   quantity: number,
 ): Promise<boolean> {
   if (!sheetsEnabled()) return false;
-  return enqueueSheetWrite(async () => {
+  return enqueueSheetWrite(drawer.id, async () => {
+    warmSheetsIfIdle();
     const number = drawerNumber(drawer);
     if (!number) return;
     const live = db.stock.get(drawer.id)?.quantity ?? quantity;
@@ -542,7 +560,8 @@ export async function setSheetTransaction(
   rowAction: "append" | "update" = "append",
 ): Promise<boolean> {
   if (!sheetsEnabled()) return false;
-  return enqueueSheetWrite(async () => {
+  return enqueueSheetWrite(drawer.id, async () => {
+    warmSheetsIfIdle();
     const number = drawerNumber(drawer);
     if (!number) return;
 
@@ -596,7 +615,8 @@ export async function setSheetLockEvent(
   rowAction: "append" | "update" = "append",
 ): Promise<boolean> {
   if (!sheetsEnabled()) return false;
-  return enqueueSheetWrite(async () => {
+  return enqueueSheetWrite(drawer.id, async () => {
+    warmSheetsIfIdle();
     const number = drawerNumber(drawer);
     if (!number) return;
 
@@ -650,7 +670,8 @@ export async function setSheetLocked(
   locked: boolean,
 ): Promise<boolean> {
   if (!sheetsEnabled()) return false;
-  return enqueueSheetWrite(async () => {
+  return enqueueSheetWrite(drawer.id, async () => {
+    warmSheetsIfIdle();
     const number = drawerNumber(drawer);
     if (!number) return;
     const liveLocked = !db.openDrawer.has(drawer.id);

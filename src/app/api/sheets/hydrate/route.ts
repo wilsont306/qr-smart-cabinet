@@ -21,7 +21,7 @@ export async function GET() {
 
   const result = await pullStockFromSheets({
     force: true,
-    timeoutMs: 20000,
+    timeoutMs: 10000,
     includePhotos: false,
   });
 
