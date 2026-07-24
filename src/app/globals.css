@@ -1194,6 +1194,26 @@ body.smart-root {
   font-weight: 800;
 }
 
+.smart-stepper-input {
+  display: block;
+  width: 4.5ch;
+  margin: 0 auto;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 22px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  outline: none;
+  caret-color: var(--smart-accent, #cf2233);
+}
+
+.smart-stepper-input:focus {
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--smart-accent, #cf2233) 55%, transparent);
+}
+
 .smart-stepper span {
   color: var(--smart-sub);
   font-size: 11.5px;

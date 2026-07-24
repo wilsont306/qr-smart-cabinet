@@ -799,6 +799,7 @@ function DrawerDetail({
 }) {
   const [mode, setMode] = useState<Intent>("take");
   const [qty, setQty] = useState(1);
+  const [qtyInput, setQtyInput] = useState("1");
   const [working, setWorking] = useState(false);
   const [lockWorking, setLockWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -819,6 +820,7 @@ function DrawerDetail({
   useEffect(() => {
     setMode("take");
     setQty(1);
+    setQtyInput("1");
     setWorking(false);
     setLockWorking(false);
     setError(null);
@@ -836,12 +838,25 @@ function DrawerDetail({
   }, [drawer?.quantity, drawer?.item.name, mode, drawer]);
 
   useEffect(() => {
+    setQtyInput(String(qty));
+  }, [qty]);
+
+  useEffect(() => {
     if (lockWorking || dragRef.current?.dragging) return;
     setSlideX(drawer?.locked === false ? 1 : 0);
   }, [drawer?.locked, lockWorking]);
 
   const max = drawer ? Math.max(drawer.quantity, 1) : 1;
-  const clampedQty = Math.max(1, Math.min(qty, mode === "take" ? max : 99));
+  const qtyCap = mode === "take" ? max : 99;
+  const clampedQty = Math.max(1, Math.min(qty, qtyCap));
+
+  function commitQty(raw: string | number) {
+    const n =
+      typeof raw === "number" ? raw : parseInt(String(raw).replace(/\D/g, ""), 10);
+    const next = Number.isFinite(n) ? Math.max(1, Math.min(qtyCap, n)) : 1;
+    setQty(next);
+    setQtyInput(String(next));
+  }
   const shown = phase === "shown";
   const status = drawer
     ? drawer.quantity === 0
@@ -1145,20 +1160,43 @@ function DrawerDetail({
 
         <div className="smart-stepper">
           <button
-            onClick={() => setQty((value) => Math.max(1, value - 1))}
+            type="button"
+            onClick={() => commitQty(clampedQty - 1)}
             disabled={clampedQty <= 1}
           >
             -
           </button>
           <div>
-            <b>{clampedQty}</b>
+            <input
+              className="smart-stepper-input"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              aria-label="Quantity"
+              value={qtyInput}
+              onChange={(event) => {
+                const digits = event.target.value.replace(/\D/g, "").slice(0, 5);
+                setQtyInput(digits);
+                if (digits === "") return;
+                const n = parseInt(digits, 10);
+                if (Number.isFinite(n)) setQty(Math.max(1, Math.min(qtyCap, n)));
+              }}
+              onBlur={() => commitQty(qtyInput)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  (event.target as HTMLInputElement).blur();
+                }
+              }}
+            />
             <span>
               max {mode === "take" ? max : 99} {pluralUnit(drawer.item.unit, max)}
             </span>
           </div>
           <button
-            onClick={() => setQty((value) => Math.min(mode === "take" ? max : 99, value + 1))}
-            disabled={clampedQty >= (mode === "take" ? max : 99)}
+            type="button"
+            onClick={() => commitQty(clampedQty + 1)}
+            disabled={clampedQty >= qtyCap}
             style={{ background: accent, color: "#FFFDF8" }}
           >
             +
