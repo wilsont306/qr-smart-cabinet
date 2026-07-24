@@ -61,54 +61,79 @@ function doPost(e) {
     if (body.type === 'photo_probe') {
       return json_(probePhotos_(body.number));
     }
+
+    // Mutations share a document lock so rapid unlock/take/lock can't race cells.
     if (body.type === 'set_quantity') {
-      return json_({
-        ok: true,
-        updated: setQuantity_(body.number, body.quantity),
-      });
+      return json_(withDocLock_(function () {
+        return {
+          ok: true,
+          updated: setQuantity_(body.number, body.quantity),
+        };
+      }));
     }
     if (body.type === 'set_locked') {
-      return json_({
-        ok: true,
-        updated: setLocked_(body.number, body.locked),
-      });
+      return json_(withDocLock_(function () {
+        return {
+          ok: true,
+          updated: setLocked_(body.number, body.locked),
+        };
+      }));
     }
     if (body.type === 'session_row') {
-      var row = body.row || {};
-      if (body.action === 'update') {
-        return json_({ ok: true, updated: updateSessionRow_(row) });
-      }
-      return json_({ ok: true, appended: appendSessionRow_(row) });
+      return json_(withDocLock_(function () {
+        var row = body.row || {};
+        if (body.action === 'update') {
+          return { ok: true, updated: updateSessionRow_(row) };
+        }
+        return { ok: true, appended: appendSessionRow_(row) };
+      }));
     }
     // Combined take/return: patch Quantity + write the session row in one call.
     if (body.type === 'tx') {
-      var out = { ok: true };
-      if (body.number != null && body.quantity != null) {
-        out.qtyUpdated = setQuantity_(body.number, body.quantity);
-      }
-      if (body.row) {
-        out.sessionUpdated = body.action === 'update'
-          ? updateSessionRow_(body.row)
-          : appendSessionRow_(body.row);
-      }
-      return json_(out);
+      return json_(withDocLock_(function () {
+        var out = { ok: true };
+        if (body.number != null && body.quantity != null) {
+          out.qtyUpdated = setQuantity_(body.number, body.quantity);
+        }
+        if (body.row) {
+          out.sessionUpdated = body.action === 'update'
+            ? updateSessionRow_(body.row)
+            : appendSessionRow_(body.row);
+        }
+        return out;
+      }));
     }
     // Combined lock/unlock: patch Is Locked + write the session row in one call.
     if (body.type === 'lock_tx') {
-      var lockOut = { ok: true };
-      if (body.number != null && body.locked != null) {
-        lockOut.lockUpdated = setLocked_(body.number, body.locked);
-      }
-      if (body.row) {
-        lockOut.sessionUpdated = body.action === 'update'
-          ? updateSessionRow_(body.row)
-          : appendSessionRow_(body.row);
-      }
-      return json_(lockOut);
+      return json_(withDocLock_(function () {
+        var lockOut = { ok: true };
+        if (body.number != null && body.locked != null) {
+          lockOut.lockUpdated = setLocked_(body.number, body.locked);
+        }
+        if (body.row) {
+          lockOut.sessionUpdated = body.action === 'update'
+            ? updateSessionRow_(body.row)
+            : appendSessionRow_(body.row);
+        }
+        return lockOut;
+      }));
     }
     return json_({ error: 'unknown_type' });
   } catch (err) {
     return json_({ error: String(err) });
+  }
+}
+
+/** Serialize spreadsheet mutations across concurrent Web App executions. */
+function withDocLock_(fn) {
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(30000)) {
+    throw new Error('sheet_busy');
+  }
+  try {
+    return fn();
+  } finally {
+    lock.releaseLock();
   }
 }
 

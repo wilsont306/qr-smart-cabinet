@@ -196,6 +196,11 @@ function DrawersPageInner() {
     let cancelled = false;
     // Kick a background warm on this page's isolate immediately.
     void fetch("/api/sheets/preload", { credentials: "same-origin", cache: "no-store" });
+    // Keep Apps Script warm while the cabinet stays open (Hobby cron is daily only).
+    void fetch("/api/sheets/ping", { credentials: "same-origin", cache: "no-store" });
+    const keepAlive = window.setInterval(() => {
+      void fetch("/api/sheets/ping", { credentials: "same-origin", cache: "no-store" });
+    }, 3 * 60 * 1000);
 
     void (async () => {
       const first = await fetchCabinet();
@@ -242,6 +247,7 @@ function DrawersPageInner() {
     });
     return () => {
       cancelled = true;
+      window.clearInterval(keepAlive);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount load
   }, [router]);
@@ -761,7 +767,7 @@ function DrawerDetail({
   const isOpen = slideX >= 0.5;
 
   async function commitLock(wantOpen: boolean) {
-    if (!drawer) return;
+    if (!drawer || lockWorking) return;
     const currentlyOpen = !drawer.locked;
     if (wantOpen === currentlyOpen) {
       setSlideX(wantOpen ? 1 : 0);
@@ -862,7 +868,7 @@ function DrawerDetail({
   }
 
   async function confirm() {
-    if (!drawer) return;
+    if (!drawer || working || lockWorking) return;
     setWorking(true);
     setError(null);
     const { ok, status: httpStatus, data } = await api<
@@ -972,6 +978,7 @@ function DrawerDetail({
               onPointerUp={onPointerUp}
               onPointerCancel={onPointerUp}
               onKeyDown={(event) => {
+                if (lockWorking || drawer.status === "disabled") return;
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
                   void commitLock(!isOpen);
@@ -1056,7 +1063,12 @@ function DrawerDetail({
           type="button"
           className="smart-cta w-full"
           onClick={confirm}
-          disabled={working || drawer.status === "disabled" || (mode === "take" && drawer.quantity === 0)}
+          disabled={
+            working ||
+            lockWorking ||
+            drawer.status === "disabled" ||
+            (mode === "take" && drawer.quantity === 0)
+          }
           style={{ background: accent }}
         >
           {working

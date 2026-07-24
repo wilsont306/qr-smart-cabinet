@@ -12,10 +12,8 @@ import {
 import { currentSession } from "@/lib/session";
 import { drawerView } from "@/lib/dto";
 import {
-  pullStockFromSheets,
+  noteLocalStock,
   setSheetTransaction,
-  sheetsCacheFresh,
-  sheetsEnabled,
 } from "@/lib/sheets";
 import type { Intent, Transaction } from "@/lib/types";
 
@@ -96,11 +94,7 @@ export async function POST(
   }
 
   // Don't stall take/return on a cold script — mutate local SoT, mirror in after().
-  if (sheetsEnabled() && !sheetsCacheFresh()) {
-    after(() => {
-      void pullStockFromSheets({ timeoutMs: 15000 });
-    });
-  }
+  // Never pull inventory mid-mutation: that races quantity/lock writes.
 
   const stock = db.stock.get(drawer.id)!;
 
@@ -125,6 +119,7 @@ export async function POST(
   const now = Date.now();
   stock.quantity += delta;
   stock.version += 1;
+  noteLocalStock(drawer.id, stock.quantity);
 
   const ledgerSessionId = newId();
   db.unlockSessions.set(ledgerSessionId, {

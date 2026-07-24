@@ -6,11 +6,8 @@ import { currentSession } from "@/lib/session";
 import { drawerView } from "@/lib/dto";
 import {
   noteLocalLock,
-  pullStockFromSheets,
   setSheetLockEvent,
   setSheetLocked,
-  sheetsCacheFresh,
-  sheetsEnabled,
 } from "@/lib/sheets";
 
 // POST /api/drawers/{id}/lock — physical lock (no stock mutation).
@@ -33,12 +30,6 @@ export async function POST(
   const drawer = drawerId ? db.drawers.get(drawerId) : undefined;
   if (!drawer || !canAccessDrawer(user.id, drawer.id)) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
-  }
-
-  if (sheetsEnabled() && !sheetsCacheFresh()) {
-    after(() => {
-      void pullStockFromSheets({ timeoutMs: 15000 });
-    });
   }
 
   const stock = db.stock.get(drawer.id)!;

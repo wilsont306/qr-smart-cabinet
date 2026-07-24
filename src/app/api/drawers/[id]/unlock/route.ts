@@ -14,11 +14,8 @@ import { drawerView } from "@/lib/dto";
 import { deviceOpen, issueUnlockCommand } from "@/lib/lock";
 import {
   noteLocalLock,
-  pullStockFromSheets,
   setSheetLockEvent,
   setSheetLocked,
-  sheetsCacheFresh,
-  sheetsEnabled,
 } from "@/lib/sheets";
 
 interface Body {
@@ -79,11 +76,7 @@ export async function POST(
   }
 
   // Don't block unlock on Sheets — stock/authz use in-memory SoT.
-  if (sheetsEnabled() && !sheetsCacheFresh()) {
-    after(() => {
-      void pullStockFromSheets({ timeoutMs: 15000 });
-    });
-  }
+  // Never pull inventory here: a stale pull racing a take/lock overwrites qty.
 
   if (db.openDrawer.has(drawer.id)) {
     const stock = db.stock.get(drawer.id)!;

@@ -32,8 +32,33 @@ let inflightPull: Promise<{ ok: boolean; error?: string; count?: number }> | nul
 const LOCK_HOLD_MS = 20_000;
 const recentLockHold = new Map<string, { locked: boolean; until: number }>();
 
+/** Same idea for Quantity — rapid takes must not lose to a stale inventory pull. */
+const recentStockHold = new Map<string, { quantity: number; until: number }>();
+
+/**
+ * Serialize Apps Script writes on this isolate. Rapid unlock→take→lock must
+ * land in order; parallel posts last-write-win on Quantity / Is Locked.
+ */
+let sheetWriteTail: Promise<void> = Promise.resolve();
+
+function enqueueSheetWrite(task: () => Promise<void>): Promise<void> {
+  const run = sheetWriteTail.then(task, task).then(
+    () => undefined,
+    () => undefined,
+  );
+  sheetWriteTail = run;
+  return run;
+}
+
 export function noteLocalLock(drawerId: string, locked: boolean) {
   recentLockHold.set(drawerId, { locked, until: Date.now() + LOCK_HOLD_MS });
+}
+
+export function noteLocalStock(drawerId: string, quantity: number) {
+  recentStockHold.set(drawerId, {
+    quantity: Math.max(0, Math.floor(quantity)),
+    until: Date.now() + LOCK_HOLD_MS,
+  });
 }
 
 export type SessionAction =
@@ -180,12 +205,10 @@ function sessionRowPayload(row: SessionRow) {
   };
 }
 
-export async function logSessionRow(
+async function postSessionRow(
   row: SessionRow,
   action: "append" | "update" = "append",
-): Promise<void> {
-  if (!sheetsEnabled()) return;
-
+): Promise<boolean> {
   const payload = {
     secret: SECRET,
     type: "session_row",
@@ -199,11 +222,22 @@ export async function logSessionRow(
       type: "sheets.session_error",
       detail: `${action} ${row.action} ${row.sessionId}`,
     });
-    return;
+    return false;
   }
   audit({
     type: "sheets.session_ok",
     detail: `${action} ${row.action} ${row.sessionId}`,
+  });
+  return true;
+}
+
+export async function logSessionRow(
+  row: SessionRow,
+  action: "append" | "update" = "append",
+): Promise<void> {
+  if (!sheetsEnabled()) return;
+  await enqueueSheetWrite(async () => {
+    await postSessionRow(row, action);
   });
 }
 
@@ -346,6 +380,18 @@ export async function pullStockFromSheets(opts?: {
   return run;
 }
 
+/** Tiny Apps Script round-trip — keeps the Web App warm while someone is using the cabinet. */
+export async function pingSheets(): Promise<{ ok: boolean; error?: string; ms: number }> {
+  if (!sheetsEnabled()) return { ok: false, error: "not_configured", ms: 0 };
+  const started = Date.now();
+  const res = await postToSheets(
+    { secret: SECRET, type: "ping" },
+    { timeoutMs: 8000 },
+  );
+  if (!res) return { ok: false, error: "fetch_failed", ms: Date.now() - started };
+  return { ok: true, ms: Date.now() - started };
+}
+
 /** Lightweight ping used by cron to keep Apps Script warm. */
 export async function warmSheets(): Promise<{ ok: boolean; error?: string; ms: number }> {
   if (!sheetsEnabled()) return { ok: false, error: "not_configured", ms: 0 };
@@ -354,12 +400,9 @@ export async function warmSheets(): Promise<{ ok: boolean; error?: string; ms: n
   const result = await pullStockFromSheets({ force: true, timeoutMs: 25000 });
   if (!result.ok) {
     // Fall back to a tiny ping so the script process stays awake.
-    const ping = await postToSheets(
-      { secret: SECRET, type: "ping" },
-      { timeoutMs: 12000 },
-    );
-    if (!ping) {
-      return { ok: false, error: result.error ?? "fetch_failed", ms: Date.now() - started };
+    const ping = await pingSheets();
+    if (!ping.ok) {
+      return { ok: false, error: result.error ?? ping.error ?? "fetch_failed", ms: Date.now() - started };
     }
   }
   return { ok: true, ms: Date.now() - started };
@@ -382,7 +425,14 @@ function applySheetRowsToStore(rows: SheetDrawerRow[]) {
     if (!stock) continue;
 
     const qty = Math.max(0, Math.floor(Number(row.quantity) || 0));
-    if (stock.quantity !== qty) {
+    const stockHold = recentStockHold.get(drawer.id);
+    if (stockHold && Date.now() < stockHold.until) {
+      // Keep post-mutation quantity until the sheet write catches up.
+      if (stock.quantity !== stockHold.quantity) {
+        stock.quantity = stockHold.quantity;
+        stock.version += 1;
+      }
+    } else if (stock.quantity !== qty) {
       stock.quantity = qty;
       stock.version += 1;
     }
@@ -434,28 +484,32 @@ export async function setSheetQuantity(
   quantity: number,
 ): Promise<boolean> {
   if (!sheetsEnabled()) return false;
-  const number = drawerNumber(drawer);
-  if (!number) return false;
+  return enqueueSheetWrite(async () => {
+    const number = drawerNumber(drawer);
+    if (!number) return;
+    const live = db.stock.get(drawer.id)?.quantity ?? quantity;
+    const qty = Math.max(0, Math.floor(live));
 
-  const ok = await postOk({
-    secret: SECRET,
-    type: "set_quantity",
-    number,
-    quantity: Math.max(0, Math.floor(quantity)),
-  });
-  if (!ok) {
-    audit({ type: "sheets.qty_error", drawerId: drawer.id, detail: String(quantity) });
-    return false;
-  }
-  invalidatePullCache();
-  audit({ type: "sheets.qty_ok", drawerId: drawer.id, detail: String(quantity) });
-  return true;
+    const ok = await postOk({
+      secret: SECRET,
+      type: "set_quantity",
+      number,
+      quantity: qty,
+    });
+    if (!ok) {
+      audit({ type: "sheets.qty_error", drawerId: drawer.id, detail: String(qty) });
+      return;
+    }
+    invalidatePullCache();
+    audit({ type: "sheets.qty_ok", drawerId: drawer.id, detail: String(qty) });
+  }).then(() => true);
 }
 
 /**
  * Take/return in one request: patch Quantity + write the session row together.
  * Halves the Apps Script round-trips vs. two separate posts. Falls back to the
  * legacy pair of calls if the deployed script predates the combined `tx` type.
+ * Queued so rapid takes can't last-write-win with a stale quantity.
  */
 export async function setSheetTransaction(
   drawer: Drawer,
@@ -464,35 +518,47 @@ export async function setSheetTransaction(
   rowAction: "append" | "update" = "append",
 ): Promise<boolean> {
   if (!sheetsEnabled()) return false;
-  const number = drawerNumber(drawer);
-  if (!number) return false;
+  return enqueueSheetWrite(async () => {
+    const number = drawerNumber(drawer);
+    if (!number) return;
 
-  const result = await postResult({
-    secret: SECRET,
-    type: "tx",
-    number,
-    quantity: Math.max(0, Math.floor(quantity)),
-    action: rowAction,
-    row: sessionRowPayload(row),
-  });
+    // Always mirror the latest in-memory stock — earlier queued writes may be stale.
+    const liveQty = db.stock.get(drawer.id)?.quantity ?? quantity;
+    const qty = Math.max(0, Math.floor(liveQty));
+    const locked = !db.openDrawer.has(drawer.id);
+    const liveRow: SessionRow = { ...row, locked };
 
-  if (result.ok) {
-    invalidatePullCache();
-    audit({ type: "sheets.tx_ok", drawerId: drawer.id, detail: `${row.action} ${quantity}` });
-    return true;
-  }
+    const result = await postResult({
+      secret: SECRET,
+      type: "tx",
+      number,
+      quantity: qty,
+      action: rowAction,
+      row: sessionRowPayload(liveRow),
+    });
 
-  // Older script without the combined endpoint — do the two writes in parallel.
-  if (result.error === "unknown_type") {
-    const [qtyOk] = await Promise.all([
-      setSheetQuantity(drawer, quantity),
-      logSessionRow(row, rowAction),
-    ]);
-    return qtyOk;
-  }
+    if (result.ok) {
+      invalidatePullCache();
+      audit({ type: "sheets.tx_ok", drawerId: drawer.id, detail: `${row.action} ${qty}` });
+      return;
+    }
 
-  audit({ type: "sheets.tx_error", drawerId: drawer.id, detail: result.error ?? "failed" });
-  return false;
+    if (result.error === "unknown_type") {
+      await Promise.all([
+        postOk({
+          secret: SECRET,
+          type: "set_quantity",
+          number,
+          quantity: qty,
+        }),
+        postSessionRow(liveRow, rowAction),
+      ]);
+      invalidatePullCache();
+      return;
+    }
+
+    audit({ type: "sheets.tx_error", drawerId: drawer.id, detail: result.error ?? "failed" });
+  }).then(() => true);
 }
 
 /**
@@ -506,42 +572,52 @@ export async function setSheetLockEvent(
   rowAction: "append" | "update" = "append",
 ): Promise<boolean> {
   if (!sheetsEnabled()) return false;
-  const number = drawerNumber(drawer);
-  if (!number) return false;
+  return enqueueSheetWrite(async () => {
+    const number = drawerNumber(drawer);
+    if (!number) return;
 
-  const result = await postResult({
-    secret: SECRET,
-    type: "lock_tx",
-    number,
-    locked: Boolean(locked),
-    action: rowAction,
-    row: sessionRowPayload(row),
-  });
+    const liveLocked = !db.openDrawer.has(drawer.id);
+    const liveRow: SessionRow = { ...row, locked: liveLocked };
 
-  if (result.ok) {
-    invalidatePullCache();
-    audit({
-      type: "sheets.lock_tx_ok",
-      drawerId: drawer.id,
-      detail: `${row.action} ${locked ? "locked" : "unlocked"}`,
+    const result = await postResult({
+      secret: SECRET,
+      type: "lock_tx",
+      number,
+      locked: liveLocked,
+      action: rowAction,
+      row: sessionRowPayload(liveRow),
     });
-    return true;
-  }
 
-  if (result.error === "unknown_type") {
-    const [lockOk] = await Promise.all([
-      setSheetLocked(drawer, locked),
-      logSessionRow(row, rowAction),
-    ]);
-    return lockOk;
-  }
+    if (result.ok) {
+      invalidatePullCache();
+      audit({
+        type: "sheets.lock_tx_ok",
+        drawerId: drawer.id,
+        detail: `${row.action} ${liveLocked ? "locked" : "unlocked"}`,
+      });
+      return;
+    }
 
-  audit({
-    type: "sheets.lock_tx_error",
-    drawerId: drawer.id,
-    detail: result.error ?? "failed",
-  });
-  return false;
+    if (result.error === "unknown_type") {
+      await Promise.all([
+        postOk({
+          secret: SECRET,
+          type: "set_locked",
+          number,
+          locked: liveLocked,
+        }),
+        postSessionRow(liveRow, rowAction),
+      ]);
+      invalidatePullCache();
+      return;
+    }
+
+    audit({
+      type: "sheets.lock_tx_error",
+      drawerId: drawer.id,
+      detail: result.error ?? "failed",
+    });
+  }).then(() => true);
 }
 
 /** Patch Is Locked for one drawer only — does not rewrite Part or Quantity. */
@@ -550,30 +626,32 @@ export async function setSheetLocked(
   locked: boolean,
 ): Promise<boolean> {
   if (!sheetsEnabled()) return false;
-  const number = drawerNumber(drawer);
-  if (!number) return false;
+  return enqueueSheetWrite(async () => {
+    const number = drawerNumber(drawer);
+    if (!number) return;
+    const liveLocked = !db.openDrawer.has(drawer.id);
 
-  const ok = await postOk({
-    secret: SECRET,
-    type: "set_locked",
-    number,
-    locked: Boolean(locked),
-  });
-  if (!ok) {
-    audit({
-      type: "sheets.lock_error",
-      drawerId: drawer.id,
-      detail: locked ? "locked" : "unlocked",
+    const ok = await postOk({
+      secret: SECRET,
+      type: "set_locked",
+      number,
+      locked: liveLocked,
     });
-    return false;
-  }
-  invalidatePullCache();
-  audit({
-    type: "sheets.lock_ok",
-    drawerId: drawer.id,
-    detail: locked ? "locked" : "unlocked",
-  });
-  return true;
+    if (!ok) {
+      audit({
+        type: "sheets.lock_error",
+        drawerId: drawer.id,
+        detail: liveLocked ? "locked" : "unlocked",
+      });
+      return;
+    }
+    invalidatePullCache();
+    audit({
+      type: "sheets.lock_ok",
+      drawerId: drawer.id,
+      detail: liveLocked ? "locked" : "unlocked",
+    });
+  }).then(() => true);
 }
 
 /** Refresh from sheet (UI Sync button). Never pushes inventory rows. */
