@@ -59,11 +59,11 @@ Empty Image cells keep the wire placeholder.
 
 **Session tracker**
 
-| Name | Time | Session ID | Action | Part | Shelf | Quantity | Locked? | Team # | Level |
+| Name | Team # | Robotics Level | Time | Session ID | Action | Part | Quantity | Locked? | Shelf |
 
-Add **Team #** and **Level** (or Robotics Level) columns so check-in data is
-logged with each take/return. The inventory sheet may also have those columns —
-they get stamped with the visitor’s team when they use a drawer.
+Check-in writes **Team #** and **Robotics Level** on this sheet with each
+take/return/lock row. You can remove those columns from the inventory sheet if
+you added them there by mistake.
 
 ## Behavior
 
