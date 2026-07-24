@@ -922,10 +922,10 @@ function appendSessionRow_(row) {
   if (!next) return prev;
   if (!prev) return next;
 
-  // Take/return after Unlock → single combined action on that session row.
+  // Take/return after Unlock → keep one row, label as Take/Return.
   if (prev === 'Unlock') {
-    if (next === 'Take' || next === 'Unlock + Take') return 'Unlock + Take';
-    if (next === 'Return' || next === 'Unlock + Return') return 'Unlock + Return';
+    if (next === 'Take' || next === 'Unlock + Take') return 'Take';
+    if (next === 'Return' || next === 'Unlock + Return') return 'Return';
   }
 
   // Lock after a take/return → "Take + Lock" / "Return + Lock"

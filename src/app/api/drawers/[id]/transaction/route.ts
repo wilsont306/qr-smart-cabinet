@@ -189,14 +189,9 @@ export async function POST(
   const item = db.items.get(drawer.itemId);
   const partName = item?.name ?? drawer.itemId;
   const drawerOpen = db.openDrawer.has(drawer.id);
-  const action =
-    drawerOpen
-      ? intent === "take"
-        ? "Unlock + Take"
-        : "Unlock + Return"
-      : intent === "take"
-        ? "Take"
-        : "Return";
+  // Always log Take/Return — "Unlock + …" was confusing when people only return
+  // after a normal unlock (unlock is already its own tracker row).
+  const action = intent === "take" ? "Take" : "Return";
 
   audit({
     type: "transaction.recorded",
@@ -219,8 +214,7 @@ export async function POST(
 
   // Mirror to the sheet before responding so Vercel can't freeze the isolate
   // mid-write. Sheets API is typically 200–800ms; Apps Script may be slower.
-  // First take while unlocked updates the Unlock row → "Unlock + Take".
-  // Later takes of the same part append a new tracker line (quantity is not overwritten).
+  // First take/return while unlocked updates the Unlock row; later ones append.
   const qtyAfter = stock.quantity;
   const sessionAction: "append" | "update" = drawerOpen ? "update" : "append";
   if (sheetsEnabled()) {

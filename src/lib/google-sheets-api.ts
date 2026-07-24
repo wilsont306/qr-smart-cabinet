@@ -630,9 +630,10 @@ function mergeAction(existing: string, incoming: string): string {
   const next = incoming.trim();
   if (!next) return prev;
   if (!prev) return next;
+  // First take/return after Unlock replaces the Unlock label (keep one row).
   if (prev === "Unlock") {
-    if (next === "Take" || next === "Unlock + Take") return "Unlock + Take";
-    if (next === "Return" || next === "Unlock + Return") return "Unlock + Return";
+    if (next === "Take" || next === "Unlock + Take") return "Take";
+    if (next === "Return" || next === "Unlock + Return") return "Return";
   }
   if (next === "Lock") {
     if (prev === "Take" || prev === "Unlock + Take") return "Take + Lock";
