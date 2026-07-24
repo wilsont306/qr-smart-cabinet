@@ -105,40 +105,43 @@ async function postToSheets(
     const ctrl = new AbortController();
     const timeoutMs = opts?.timeoutMs ?? 20000;
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    const body = JSON.stringify(payload);
-    const headers = { "Content-Type": "text/plain;charset=utf-8" };
+    try {
+      const body = JSON.stringify(payload);
+      const headers = { "Content-Type": "text/plain;charset=utf-8" };
 
-    // Apps Script /exec returns 302 → googleusercontent. Prefer manual follow so
-    // we don't lose the ContentService body (common with auto-follow + JSON mime).
-    let res = await fetch(WEBHOOK_URL!, {
-      method: "POST",
-      headers,
-      body,
-      signal: ctrl.signal,
-      redirect: "manual",
-    });
+      // Apps Script /exec returns 302 → googleusercontent. Prefer manual follow so
+      // we don't lose the ContentService body (common with auto-follow + JSON mime).
+      let res = await fetch(WEBHOOK_URL!, {
+        method: "POST",
+        headers,
+        body,
+        signal: ctrl.signal,
+        redirect: "manual",
+      });
 
-    if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get("location");
-      if (loc) {
-        res = await fetch(loc, {
-          method: "GET",
-          signal: ctrl.signal,
-          redirect: "follow",
-        });
-      } else {
-        res = await fetch(WEBHOOK_URL!, {
-          method: "POST",
-          headers,
-          body,
-          signal: ctrl.signal,
-          redirect: "follow",
-        });
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get("location");
+        if (loc) {
+          res = await fetch(loc, {
+            method: "GET",
+            signal: ctrl.signal,
+            redirect: "follow",
+          });
+        } else {
+          res = await fetch(WEBHOOK_URL!, {
+            method: "POST",
+            headers,
+            body,
+            signal: ctrl.signal,
+            redirect: "follow",
+          });
+        }
       }
-    }
 
-    clearTimeout(timer);
-    return res;
+      return res;
+    } finally {
+      clearTimeout(timer);
+    }
   } catch {
     return null;
   }
@@ -162,19 +165,40 @@ function parseSheetsJson(text: string): unknown {
 
 async function postResult(
   payload: Record<string, unknown>,
+  opts?: { timeoutMs?: number; retries?: number },
 ): Promise<{ ok: boolean; error?: string }> {
-  const res = await postToSheets(payload, { timeoutMs: 20000 });
-  if (!res) return { ok: false, error: "fetch_failed" };
-  try {
-    const text = await res.text();
-    const body = parseSheetsJson(text) as { error?: string; ok?: boolean };
-    if (body?.error && body.error !== "snapshot_disabled") {
-      return { ok: false, error: body.error };
+  const retries = opts?.retries ?? 2;
+  const timeoutMs = opts?.timeoutMs ?? 45000;
+  let lastError = "fetch_failed";
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) {
+      await new Promise((r) => setTimeout(r, 400 * attempt));
     }
-    return { ok: res.ok || res.status === 200 };
-  } catch {
-    return { ok: false, error: "invalid_json" };
+    const res = await postToSheets(payload, { timeoutMs });
+    if (!res) {
+      lastError = "fetch_failed";
+      continue;
+    }
+    try {
+      const text = await res.text();
+      const body = parseSheetsJson(text) as { error?: string; ok?: boolean };
+      if (body?.error && body.error !== "snapshot_disabled") {
+        lastError = body.error;
+        // Lock contention / brief Apps Script blip — worth retrying.
+        if (/sheet_busy|timed out|timeout|service timed out/i.test(body.error)) {
+          continue;
+        }
+        return { ok: false, error: body.error };
+      }
+      if (res.ok || res.status === 200) return { ok: true };
+      lastError = `http_${res.status}`;
+    } catch {
+      lastError = "invalid_json";
+    }
   }
+
+  return { ok: false, error: lastError };
 }
 
 async function postOk(payload: Record<string, unknown>): Promise<boolean> {

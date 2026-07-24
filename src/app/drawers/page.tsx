@@ -871,17 +871,30 @@ function DrawerDetail({
     if (!drawer || working || lockWorking) return;
     setWorking(true);
     setError(null);
-    const { ok, status: httpStatus, data } = await api<
-      TxResult & { error?: string; drawer?: DrawerView }
-    >(`/api/drawers/${encodeURIComponent(drawer.id)}/transaction`, {
-      method: "POST",
-      body: JSON.stringify({
-        quantity: clampedQty,
-        intent: mode,
-        idempotencyKey: idemKey.current,
-        stockVersion: drawer.stockVersion,
-      }),
-    });
+
+    async function postTx(stockVersion: number) {
+      return api<TxResult & { error?: string; drawer?: DrawerView }>(
+        `/api/drawers/${encodeURIComponent(drawer!.id)}/transaction`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            quantity: clampedQty,
+            intent: mode,
+            idempotencyKey: idemKey.current,
+            stockVersion,
+          }),
+        },
+      );
+    }
+
+    let { ok, status: httpStatus, data } = await postTx(drawer.stockVersion);
+
+    // If another tab/isolate moved stock, adopt the latest and retry once.
+    if (!ok && data.error === "stock_changed" && data.drawer) {
+      onUpdated(data.drawer);
+      idemKey.current = uuid();
+      ({ ok, status: httpStatus, data } = await postTx(data.drawer.stockVersion));
+    }
 
     setWorking(false);
     idemKey.current = uuid();

@@ -131,7 +131,10 @@ function withDocLock_(fn) {
     throw new Error('sheet_busy');
   }
   try {
-    return fn();
+    var result = fn();
+    // Flush before release so the next execution sees committed cells.
+    SpreadsheetApp.flush();
+    return result;
   } finally {
     lock.releaseLock();
   }
@@ -882,8 +885,10 @@ function locateSessionTable_() {
     if (col.name && col.sessionId && col.part && col.quantity && col.locked) {
       var lastRow = sheet.getLastRow();
       var width = sheet.getLastColumn();
-      var rows = lastRow > 1
-        ? sheet.getRange(2, 1, lastRow - 1, width).getValues()
+      // getRange(row, column, numRows, numColumns) — 3rd/4th are COUNTS.
+      var numDataRows = Math.max(0, lastRow - 1);
+      var rows = numDataRows > 0
+        ? sheet.getRange(2, 1, numDataRows, width).getValues()
         : [];
       return { sheet: sheet, headerRow: 1, col: col, rows: rows, width: width };
     }
@@ -902,7 +907,8 @@ function appendSessionRow_(row) {
   var t = locateSessionTable_();
   if (!t) throw new Error('No sheet with Name, Session ID, Part, Quantity, and Locked? headers found.');
 
-  var sheetRow = t.headerRow + t.rows.length + 1;
+  // Always append after the true last row — don't trust a stale in-memory length.
+  var sheetRow = Math.max(t.sheet.getLastRow() + 1, t.headerRow + 1);
   var actionLabel = row.actionLabel || '';
   // One setValues write for the whole row beats 8 separate setValue calls.
   var arr = new Array(t.width).fill('');

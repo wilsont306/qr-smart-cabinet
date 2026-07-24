@@ -98,14 +98,18 @@ export async function POST(
 
   const stock = db.stock.get(drawer.id)!;
 
+  // Version skew across Fluid isolates is expected with the in-memory store.
+  // Still enforce real stock; don't 409 on a stale counter alone.
   if (
     typeof body.stockVersion === "number" &&
     body.stockVersion !== stock.version
   ) {
-    return NextResponse.json(
-      { error: "stock_changed", drawer: drawerView(drawer, stock) },
-      { status: 409 },
-    );
+    audit({
+      type: "transaction.version_skew",
+      userId: user.id,
+      drawerId: drawer.id,
+      detail: `client_${body.stockVersion} server_${stock.version}`,
+    });
   }
 
   const delta = intent === "take" ? -quantity : quantity;
