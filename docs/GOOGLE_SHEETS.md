@@ -29,25 +29,26 @@ Apps Script Web Apps are often **5–15s** when cold. The Sheets API is typicall
    Or set `GOOGLE_SERVICE_ACCOUNT_JSON` to the entire JSON key (one line).
 
 8. Redeploy the app. Take/return/lock and light inventory pulls use the API.
-   Keep Apps Script only if you still want Image-column photo publishing.
+   Apps Script is only needed for Image-column photos (see below).
 
-## Fallback: Apps Script Web App
+## Apps Script (images only)
 
-1. **Open your spreadsheet** →
-   `https://docs.google.com/spreadsheets/d/1rhm8XpNQIIIrtaBwIB6tTSrOwbP3zScRpPm-DGeni_U/edit`
-2. **Extensions → Apps Script.** Paste
-   [`google-apps-script/Code.gs`](../google-apps-script/Code.gs). Save.
-3. **Script property** `SECRET` = a long random string.
-4. **Deploy → New deployment** (Web app, Execute as Me, Anyone) → copy `/exec` URL.
-5. **Env** (local + Vercel):
+Qty / lock / session tracker use the Sheets API above. Apps Script is **only**
+for the Image column (Refresh photos).
+
+1. **Open your spreadsheet** → Extensions → Apps Script.
+2. Replace `Code.gs` with [`google-apps-script/Code.gs`](../google-apps-script/Code.gs). Save.
+3. Script property `SECRET` = same as `SHEETS_SECRET`.
+4. Run `authorizeImageAccess` once → Allow.
+5. **Deploy → New version** (Web app, Execute as Me, Anyone) → copy `/exec` URL.
+6. Env (local + Vercel):
 
    ```bash
    SHEETS_WEBHOOK_URL=https://script.google.com/macros/s/AKfyc.../exec
    SHEETS_SECRET=the-same-secret
-   SESSION_SECRET=another-long-random-string
    ```
 
-6. Redeploy Apps Script with **New version** after any `Code.gs` change.
+7. Sheet menu **QR Cabinet → Connect images to app**, then **Refresh** in the app.
 
 ## Sheet layout
 
