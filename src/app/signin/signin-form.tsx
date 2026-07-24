@@ -47,18 +47,38 @@ export function SignInForm() {
     void fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" });
   }, [router]);
 
-  // Already signed in — jump straight to the cabinet.
+  // Already fully checked in (name + team + level) — jump to the cabinet.
+  // Name-only / incomplete sessions must finish the new steps.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const { ok, data } = await api<{ user: { name: string } | null }>("/api/auth/me");
-      if (cancelled || !ok || !data.user) return;
-      if (data.user.name) {
+      const { ok, data } = await api<{
+        user: {
+          name: string;
+          teamNumber?: string | null;
+          roboticsLevel?: string | null;
+        } | null;
+      }>("/api/auth/me");
+      if (cancelled || !ok || !data.user?.name) return;
+
+      const team = data.user.teamNumber?.trim() ?? "";
+      const level = data.user.roboticsLevel?.trim() ?? "";
+      if (!/^\d{1,6}$/.test(team) || !["FTC", "FRC", "FLL"].includes(level)) {
+        // Drop the incomplete cookie so Continue creates a full visit session.
         try {
-          sessionStorage.setItem("cab_session_name", data.user.name);
+          await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
         } catch {
           // ignore
         }
+        return;
+      }
+
+      try {
+        sessionStorage.setItem("cab_session_name", data.user.name);
+        sessionStorage.setItem("cab_team_number", team);
+        sessionStorage.setItem("cab_robotics_level", level);
+      } catch {
+        // ignore
       }
       if (!cancelled) router.replace(safeNextPath(searchParams.get("next")));
     })();

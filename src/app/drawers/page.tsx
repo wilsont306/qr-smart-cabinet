@@ -217,14 +217,27 @@ function DrawersPageInner() {
         if (next.sheetsFresh) return;
       }
     })();
-    api<{ user: { name: string } | null }>("/api/auth/me").then(({ ok, data }) => {
-      if (ok && data.user?.name) {
-        setSessionName(data.user.name);
-        try {
-          sessionStorage.setItem("cab_session_name", data.user.name);
-        } catch {
-          // ignore
-        }
+    api<{
+      user: {
+        name: string;
+        teamNumber?: string | null;
+        roboticsLevel?: string | null;
+      } | null;
+    }>("/api/auth/me").then(({ ok, data }) => {
+      if (!ok || !data.user?.name) return;
+      const team = data.user.teamNumber?.trim() ?? "";
+      const level = data.user.roboticsLevel?.trim() ?? "";
+      if (!/^\d{1,6}$/.test(team) || !["FTC", "FRC", "FLL"].includes(level)) {
+        router.replace("/signin");
+        return;
+      }
+      setSessionName(data.user.name);
+      try {
+        sessionStorage.setItem("cab_session_name", data.user.name);
+        sessionStorage.setItem("cab_team_number", team);
+        sessionStorage.setItem("cab_robotics_level", level);
+      } catch {
+        // ignore
       }
     });
     return () => {
