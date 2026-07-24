@@ -1,14 +1,37 @@
 # Google Sheets as inventory source
 
-When `SHEETS_WEBHOOK_URL` and `SHEETS_SECRET` are set, the **inventory sheet
-owns Part, Quantity, Is Locked, and Image**. The app reads those columns before
-showing drawers and before take/return. It never rewrites Part, Locked, or Image
-from seeded app data.
+When Sheets is configured, the **inventory sheet owns Part, Quantity, Is Locked,
+and Image**. The app reads those columns and patches Quantity / Is Locked on
+take/return/lock. Session tracker rows are append-only (separate sheet).
 
-Take/return **only** patch the Quantity cell for that drawer. Session tracker
-rows are append-only (separate sheet).
+## Fast path (recommended): Google Sheets API
 
-## One-time setup (~5 minutes)
+Apps Script Web Apps are often **5–15s** when cold. The Sheets API is typically
+**200–800ms**. Use this for workshop speed.
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/) → create/select a project.
+2. **APIs & Services → Library** → enable **Google Sheets API**.
+3. **APIs & Services → Credentials → Create credentials → Service account**.
+4. Open the service account → **Keys → Add key → JSON** → download the file.
+5. Open your spreadsheet → **Share** → add the service account email
+   (`…@….iam.gserviceaccount.com`) as **Editor**.
+6. Spreadsheet ID is the long id in the URL:
+   `https://docs.google.com/spreadsheets/d/<SHEETS_SPREADSHEET_ID>/edit`
+7. Set Vercel / `.env.local`:
+
+   ```bash
+   SHEETS_SPREADSHEET_ID=1rhm8XpNQIIIrtaBwIB6tTSrOwbP3zScRpPm-DGeni_U
+   GOOGLE_SERVICE_ACCOUNT_EMAIL=qr-cabinet@YOUR_PROJECT.iam.gserviceaccount.com
+   GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+   SESSION_SECRET=another-long-random-string
+   ```
+
+   Or set `GOOGLE_SERVICE_ACCOUNT_JSON` to the entire JSON key (one line).
+
+8. Redeploy the app. Take/return/lock and light inventory pulls use the API.
+   Keep Apps Script only if you still want Image-column photo publishing.
+
+## Fallback: Apps Script Web App
 
 1. **Open your spreadsheet** →
    `https://docs.google.com/spreadsheets/d/1rhm8XpNQIIIrtaBwIB6tTSrOwbP3zScRpPm-DGeni_U/edit`
@@ -40,60 +63,25 @@ Drawer numbers must match app labels (`Drawer 1` → `1`).
 
 Add a column headed **Image** (also accepts Photo / Img / Picture).
 
-The app reads that column on every Refresh. Preferred setup:
+The app reads that column on **Refresh** (Apps Script path). Preferred setup:
 
 1. Select the Image cell for that drawer.
 2. **Insert → Image → Image in cell**.
-3. In the sheet: **QR Cabinet → Connect images to app**  
-   (or just tap **Refresh** in the app — first sync converts the cell to
-   `=IMAGE("…")` and hosts the file in Drive).
+3. In the sheet: **QR Cabinet → Connect images to app**
 4. When Google asks, allow **Drive** access.
-5. Tap **Refresh** again in the app — it should briefly show `1 photo`.
-
-**Also works without conversion:** paste a Drive/https link in the Image cell,
-or add a **Photo URL** column with the link.
-
-Empty Image cells keep the wire placeholder.
-
-**Debug:** Apps Script → Run `debugDrawerPhotos` → View → Logs.
+5. Tap **Refresh** again in the app.
 
 **Session tracker**
 
 | Name | Team # | Robotics Level | Time | Session ID | Action | Part | Quantity | Locked? | Shelf |
 
-Check-in writes **Team #** and **Robotics Level** on this sheet with each
-take/return/lock row. You can remove those columns from the inventory sheet if
-you added them there by mistake.
-
 ## Behavior
 
-- **Read:** `inventory` → fills the UI from the sheet (including Image).
-- **Take/return:** `set_quantity` / `tx` → updates that row’s Quantity only.
-- **Refresh button:** pulls from the sheet again (does not push inventory).
-- **Lock/unlock:** patches inventory **Is Locked** and appends/updates the session
-  tracker. Redeploy Apps Script with **New version** after `Code.gs` changes.
+- **Read:** light inventory via Sheets API when configured; photos via Apps Script Refresh.
+- **Take/return/lock:** Sheets API when configured, else Apps Script `tx` / `lock_tx`.
 - Full `snapshot` overwrites are disabled.
 
 ## Architecture note
 
 Sheets is fine as shared workshop inventory. It is not a transactional DB. For
 strong concurrency, use PostgreSQL later and keep Sheets as ops UI.
-
-### Latency
-
-The Apps Script **Web App** cold-starts slowly (often 5–15s). The app mitigates this:
-
-1. **Menu load** waits briefly for Sheets, then returns and finishes the pull in
-   the background; the drawers page soft-refreshes until data is fresh.
-2. **In-flight dedupe + 30s cache** so concurrent requests don’t pile on.
-3. **Cron warmup** (`/api/sheets/warmup` once daily via `vercel.json`) pings
-   Apps Script so it has a chance to stay warm. On **Vercel Pro** you can change
-   the schedule to `*/5 * * * *` for every-5-minute warming (Hobby only allows
-   daily crons — more frequent schedules fail the deploy).
-
-Optional: set `CRON_SECRET` in Vercel and Vercel will send it automatically on
-cron invocations.
-
-For near–real-time reads without Apps Script delay, switch later to the
-**Google Sheets API** with a service account (typical ~200–500ms). That needs
-service-account JSON in Vercel env and sheet sharing with the SA email.

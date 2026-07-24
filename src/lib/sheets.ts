@@ -1,15 +1,29 @@
 import { audit, db, seed } from "./store";
 import type { Drawer } from "./types";
+import {
+  apiAppendSession,
+  apiLockTx,
+  apiPing,
+  apiPullInventory,
+  apiSetLocked,
+  apiSetQuantity,
+  apiTx,
+  apiUpdateSession,
+  sheetsApiEnabled,
+} from "./google-sheets-api";
 
 // ---------------------------------------------------------------------------
 // Google Sheets inventory + session tracker.
 //
-// The Apps Script Web App is the slow hop (cold starts ~5–15s). We mitigate by:
-//   • short in-process cache + in-flight dedupe
-//   • brief timeouts on menu reads (UI never waits for a cold script)
-//   • cron warmup hitting this same path to keep the script warm
+// Fast path: Google Sheets API + service account (~200–800ms).
+// Fallback: Apps Script Web App (cold starts ~5–15s).
 //
-// Config:
+// Config (API — preferred):
+//   SHEETS_SPREADSHEET_ID
+//   GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
+//   (or GOOGLE_SERVICE_ACCOUNT_JSON)
+//
+// Config (Apps Script fallback):
 //   SHEETS_WEBHOOK_URL   deployed Apps Script Web App /exec URL
 //   SHEETS_SECRET        shared secret checked by the script
 // ---------------------------------------------------------------------------
@@ -111,7 +125,7 @@ async function postToSheets(
   payload: Record<string, unknown>,
   opts?: { timeoutMs?: number },
 ): Promise<Response | null> {
-  if (!sheetsEnabled()) return null;
+  if (!WEBHOOK_URL || !SECRET) return null;
 
   try {
     const ctrl = new AbortController();
@@ -277,6 +291,24 @@ export async function logSessionRow(
 ): Promise<void> {
   if (!sheetsEnabled()) return;
   await enqueueSheetWrite(row.shelf || "session", async () => {
+    const payload = sessionRowPayload(row);
+    if (sheetsApiEnabled()) {
+      try {
+        if (action === "update") await apiUpdateSession(payload);
+        else await apiAppendSession(payload);
+        audit({
+          type: "sheets.session_ok",
+          detail: `api ${action} ${row.action} ${row.sessionId}`,
+        });
+        return;
+      } catch (err) {
+        audit({
+          type: "sheets.session_error",
+          detail: `api ${String(err)}`,
+        });
+        if (!WEBHOOK_URL) return;
+      }
+    }
     warmSheetsIfIdle();
     await postSessionRow(row, action);
   });
@@ -293,6 +325,22 @@ async function pullOnce(opts?: {
   photos?: number;
   imageCol?: number | null;
 }> {
+  // Fast path: Sheets API for light inventory (no Image column).
+  if (sheetsApiEnabled() && !opts?.includePhotos) {
+    const api = await apiPullInventory();
+    if (api.ok) {
+      applySheetRowsToStore(api.drawers);
+      lastPullAt = Date.now();
+      lastPullOk = true;
+      audit({ type: "sheets.pull_ok", detail: `${api.drawers.length} drawers api` });
+      return { ok: true, count: api.drawers.length, photos: 0, imageCol: null };
+    }
+    if (!WEBHOOK_URL || !SECRET) {
+      lastPullOk = false;
+      return { ok: false, error: api.error };
+    }
+  }
+
   const res = await postToSheets(
     {
       secret: SECRET,
@@ -421,15 +469,25 @@ export async function pullStockFromSheets(opts?: {
   return run;
 }
 
-/** Tiny Apps Script round-trip — keeps the Web App warm while someone is using the cabinet. */
+/** Tiny keepalive — Sheets API metadata ping, or Apps Script pong. */
 export async function pingSheets(): Promise<{ ok: boolean; error?: string; ms: number }> {
   if (!sheetsEnabled()) return { ok: false, error: "not_configured", ms: 0 };
   const started = Date.now();
+  if (sheetsApiEnabled()) {
+    try {
+      const ok = await apiPing();
+      if (ok) lastWarmAt = Date.now();
+      return { ok, error: ok ? undefined : "ping_failed", ms: Date.now() - started };
+    } catch (err) {
+      return { ok: false, error: String(err), ms: Date.now() - started };
+    }
+  }
   const res = await postToSheets(
     { secret: SECRET, type: "ping" },
     { timeoutMs: 8000 },
   );
   if (!res) return { ok: false, error: "fetch_failed", ms: Date.now() - started };
+  lastWarmAt = Date.now();
   return { ok: true, ms: Date.now() - started };
 }
 
@@ -526,12 +584,26 @@ export async function setSheetQuantity(
 ): Promise<boolean> {
   if (!sheetsEnabled()) return false;
   return enqueueSheetWrite(drawer.id, async () => {
-    warmSheetsIfIdle();
     const number = drawerNumber(drawer);
     if (!number) return;
     const live = db.stock.get(drawer.id)?.quantity ?? quantity;
     const qty = Math.max(0, Math.floor(live));
 
+    if (sheetsApiEnabled()) {
+      try {
+        const ok = await apiSetQuantity(number, qty);
+        if (ok) {
+          invalidatePullCache();
+          audit({ type: "sheets.qty_ok", drawerId: drawer.id, detail: `api ${qty}` });
+          return;
+        }
+      } catch (err) {
+        audit({ type: "sheets.qty_error", drawerId: drawer.id, detail: `api ${String(err)}` });
+        if (!WEBHOOK_URL) return;
+      }
+    }
+
+    warmSheetsIfIdle();
     const ok = await postOk({
       secret: SECRET,
       type: "set_quantity",
@@ -549,9 +621,7 @@ export async function setSheetQuantity(
 
 /**
  * Take/return in one request: patch Quantity + write the session row together.
- * Halves the Apps Script round-trips vs. two separate posts. Falls back to the
- * legacy pair of calls if the deployed script predates the combined `tx` type.
- * Queued so rapid takes can't last-write-win with a stale quantity.
+ * Prefers Google Sheets API when configured; falls back to Apps Script.
  */
 export async function setSheetTransaction(
   drawer: Drawer,
@@ -561,23 +631,39 @@ export async function setSheetTransaction(
 ): Promise<boolean> {
   if (!sheetsEnabled()) return false;
   return enqueueSheetWrite(drawer.id, async () => {
-    warmSheetsIfIdle();
     const number = drawerNumber(drawer);
     if (!number) return;
 
-    // Always mirror the latest in-memory stock — earlier queued writes may be stale.
     const liveQty = db.stock.get(drawer.id)?.quantity ?? quantity;
     const qty = Math.max(0, Math.floor(liveQty));
     const locked = !db.openDrawer.has(drawer.id);
     const liveRow: SessionRow = { ...row, locked };
+    const payload = sessionRowPayload(liveRow);
 
+    if (sheetsApiEnabled()) {
+      try {
+        await apiTx(number, qty, payload, rowAction);
+        invalidatePullCache();
+        audit({ type: "sheets.tx_ok", drawerId: drawer.id, detail: `api ${row.action} ${qty}` });
+        return;
+      } catch (err) {
+        audit({
+          type: "sheets.tx_error",
+          drawerId: drawer.id,
+          detail: `api ${String(err)}`,
+        });
+        if (!WEBHOOK_URL) return;
+      }
+    }
+
+    warmSheetsIfIdle();
     const result = await postResult({
       secret: SECRET,
       type: "tx",
       number,
       quantity: qty,
       action: rowAction,
-      row: sessionRowPayload(liveRow),
+      row: payload,
     });
 
     if (result.ok) {
@@ -606,7 +692,7 @@ export async function setSheetTransaction(
 
 /**
  * Lock/unlock in one request: patch Is Locked + write the session row together.
- * Falls back to the legacy pair of calls if the deployed script lacks `lock_tx`.
+ * Prefers Google Sheets API when configured; falls back to Apps Script.
  */
 export async function setSheetLockEvent(
   drawer: Drawer,
@@ -616,20 +702,41 @@ export async function setSheetLockEvent(
 ): Promise<boolean> {
   if (!sheetsEnabled()) return false;
   return enqueueSheetWrite(drawer.id, async () => {
-    warmSheetsIfIdle();
     const number = drawerNumber(drawer);
     if (!number) return;
 
     const liveLocked = !db.openDrawer.has(drawer.id);
     const liveRow: SessionRow = { ...row, locked: liveLocked };
+    const payload = sessionRowPayload(liveRow);
 
+    if (sheetsApiEnabled()) {
+      try {
+        await apiLockTx(number, liveLocked, payload, rowAction);
+        invalidatePullCache();
+        audit({
+          type: "sheets.lock_tx_ok",
+          drawerId: drawer.id,
+          detail: `api ${row.action} ${liveLocked ? "locked" : "unlocked"}`,
+        });
+        return;
+      } catch (err) {
+        audit({
+          type: "sheets.lock_tx_error",
+          drawerId: drawer.id,
+          detail: `api ${String(err)}`,
+        });
+        if (!WEBHOOK_URL) return;
+      }
+    }
+
+    warmSheetsIfIdle();
     const result = await postResult({
       secret: SECRET,
       type: "lock_tx",
       number,
       locked: liveLocked,
       action: rowAction,
-      row: sessionRowPayload(liveRow),
+      row: payload,
     });
 
     if (result.ok) {
@@ -671,11 +778,33 @@ export async function setSheetLocked(
 ): Promise<boolean> {
   if (!sheetsEnabled()) return false;
   return enqueueSheetWrite(drawer.id, async () => {
-    warmSheetsIfIdle();
     const number = drawerNumber(drawer);
     if (!number) return;
     const liveLocked = !db.openDrawer.has(drawer.id);
 
+    if (sheetsApiEnabled()) {
+      try {
+        const ok = await apiSetLocked(number, liveLocked);
+        if (ok) {
+          invalidatePullCache();
+          audit({
+            type: "sheets.lock_ok",
+            drawerId: drawer.id,
+            detail: `api ${liveLocked ? "locked" : "unlocked"}`,
+          });
+          return;
+        }
+      } catch (err) {
+        audit({
+          type: "sheets.lock_error",
+          drawerId: drawer.id,
+          detail: `api ${String(err)}`,
+        });
+        if (!WEBHOOK_URL) return;
+      }
+    }
+
+    warmSheetsIfIdle();
     const ok = await postOk({
       secret: SECRET,
       type: "set_locked",
@@ -738,7 +867,7 @@ export async function syncSheet(): Promise<{
 }
 
 export function sheetsEnabled(): boolean {
-  return Boolean(WEBHOOK_URL && SECRET);
+  return sheetsApiEnabled() || Boolean(WEBHOOK_URL && SECRET);
 }
 
 /** True when this isolate already has a recent successful inventory pull. */
