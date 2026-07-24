@@ -31,6 +31,23 @@ function toDisplayPhotoUrl(raw: string): string {
   return s;
 }
 
+/** In-memory seed catalog names — never prefer these over live sheet Part values. */
+const SEED_CATALOG_NAMES = new Set([
+  "Cat6 Patch Cable 1m",
+  "Cat6 Patch Cable 3m",
+  "HDMI Cable 2m",
+  "USB-C Cable 1m",
+  "Power Extension Lead",
+  "Fiber Patch Cable LC",
+  "Cable Ties (100 pk)",
+  "Velcro Cable Straps",
+  "RJ45 Connectors",
+]);
+
+function isSeedCatalogName(name: string): boolean {
+  return SEED_CATALOG_NAMES.has(name.trim());
+}
+
 interface ThemeTokens {
   bg: string;
   ink: string;
@@ -369,10 +386,27 @@ function DrawersPageInner() {
 
   function updateDrawer(next: DrawerView) {
     const hold = lockHold.current.get(next.id);
-    const merged =
+    const withLock =
       hold && Date.now() < hold.until ? { ...next, locked: hold.locked } : next;
     setDrawers((current) =>
-      current?.map((drawer) => (drawer.id === merged.id ? merged : drawer)) ?? current,
+      current?.map((drawer) => {
+        if (drawer.id !== withLock.id) return drawer;
+        // Cold isolates return seed catalog names (Cat6…). Keep sheet names.
+        const seedName = isSeedCatalogName(withLock.item.name);
+        const keepSheetName =
+          seedName &&
+          drawer.item.name &&
+          !isSeedCatalogName(drawer.item.name);
+        if (!keepSheetName) return withLock;
+        return {
+          ...withLock,
+          item: {
+            ...withLock.item,
+            name: drawer.item.name,
+            photo: drawer.item.photo,
+          },
+        };
+      }) ?? current,
     );
   }
 

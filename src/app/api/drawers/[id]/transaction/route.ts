@@ -12,6 +12,7 @@ import { currentSession } from "@/lib/session";
 import { drawerView } from "@/lib/dto";
 import {
   noteLocalStock,
+  ensureSheetInventory,
   setSheetTransaction,
   sheetsEnabled,
 } from "@/lib/sheets";
@@ -91,6 +92,12 @@ export async function POST(
 
   if (drawer.status !== "active") {
     return NextResponse.json({ error: "drawer_disabled" }, { status: 409 });
+  }
+
+  // Cold Fluid isolates start on seed names/qty — hydrate from the sheet first
+  // so take doesn't overwrite the UI (or Sheet2 Part) with placeholders.
+  if (sheetsEnabled()) {
+    await ensureSheetInventory({ timeoutMs: 8000 });
   }
 
   // Take/return only while this drawer is unlocked for the current visit.

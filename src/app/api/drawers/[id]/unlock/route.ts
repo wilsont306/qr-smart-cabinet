@@ -13,6 +13,7 @@ import { drawerView } from "@/lib/dto";
 import { deviceOpen, issueUnlockCommand } from "@/lib/lock";
 import {
   noteLocalLock,
+  ensureSheetInventory,
   setSheetLockEvent,
   setSheetLocked,
   sheetsEnabled,
@@ -75,7 +76,16 @@ export async function POST(
     return NextResponse.json({ error: "drawer_disabled" }, { status: 409 });
   }
 
-  // Never pull inventory here: a stale pull racing a take/lock overwrites qty.
+  if (drawer.status !== "active") {
+    return NextResponse.json({ error: "drawer_disabled" }, { status: 409 });
+  }
+
+  // Never pull inventory mid-mutation after unlock — but hydrate first so this
+  // isolate isn't stuck on seed Part names when the client updates from the response.
+  if (sheetsEnabled()) {
+    await ensureSheetInventory({ timeoutMs: 8000 });
+  }
+
   if (db.openDrawer.has(drawer.id)) {
     const stock = db.stock.get(drawer.id)!;
     noteLocalLock(drawer.id, false);

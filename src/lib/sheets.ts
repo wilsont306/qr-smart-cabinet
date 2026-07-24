@@ -880,6 +880,24 @@ export function sheetsCacheFresh(): boolean {
   return lastPullOk && Date.now() - lastPullAt < PULL_CACHE_MS;
 }
 
+/**
+ * Make sure this Fluid isolate has sheet Part/Quantity/Lock — not seed
+ * placeholders — before a mutation. Cold isolates otherwise return/write
+ * "Cat6 Patch Cable…" and wipe the UI after take.
+ */
+export async function ensureSheetInventory(opts?: {
+  timeoutMs?: number;
+}): Promise<boolean> {
+  if (!sheetsEnabled()) return false;
+  if (sheetsCacheFresh()) return true;
+  const result = await pullStockFromSheets({
+    force: true,
+    timeoutMs: opts?.timeoutMs ?? 8000,
+    includePhotos: false,
+  });
+  return result.ok;
+}
+
 export function sheetsCacheAgeMs(): number | null {
   if (!lastPullOk || !lastPullAt) return null;
   return Date.now() - lastPullAt;

@@ -5,6 +5,7 @@ import { currentSession } from "@/lib/session";
 import { drawerView } from "@/lib/dto";
 import {
   noteLocalLock,
+  ensureSheetInventory,
   setSheetLockEvent,
   setSheetLocked,
   sheetsEnabled,
@@ -33,6 +34,10 @@ export async function POST(
       { error: "rate_limited" },
       { status: 429, headers: { "Retry-After": String(gate.retryAfter) } },
     );
+  }
+
+  if (sheetsEnabled()) {
+    await ensureSheetInventory({ timeoutMs: 8000 });
   }
 
   const drawerId =
