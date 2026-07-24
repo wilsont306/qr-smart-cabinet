@@ -54,6 +54,8 @@ export interface SessionRow {
   shelf: string;
   quantity: number;
   locked: boolean;
+  teamNumber?: string;
+  roboticsLevel?: string;
   /** ISO timestamp; defaults to now when logging. */
   time?: string;
 }
@@ -163,6 +165,21 @@ function drawerNumber(drawer: Drawer): number {
   return parseInt(drawer.label.replace(/[^0-9]/g, ""), 10) || 0;
 }
 
+function sessionRowPayload(row: SessionRow) {
+  return {
+    name: row.name,
+    sessionId: row.sessionId,
+    actionLabel: row.action,
+    part: row.part,
+    shelf: row.shelf,
+    quantity: row.quantity,
+    locked: row.locked,
+    teamNumber: row.teamNumber ?? "",
+    roboticsLevel: row.roboticsLevel ?? "",
+    time: row.time ?? new Date().toISOString(),
+  };
+}
+
 export async function logSessionRow(
   row: SessionRow,
   action: "append" | "update" = "append",
@@ -173,16 +190,7 @@ export async function logSessionRow(
     secret: SECRET,
     type: "session_row",
     action,
-    row: {
-      name: row.name,
-      sessionId: row.sessionId,
-      actionLabel: row.action,
-      part: row.part,
-      shelf: row.shelf,
-      quantity: row.quantity,
-      locked: row.locked,
-      time: row.time ?? new Date().toISOString(),
-    },
+    row: sessionRowPayload(row),
   };
 
   const ok = await postOk(payload);
@@ -465,16 +473,7 @@ export async function setSheetTransaction(
     number,
     quantity: Math.max(0, Math.floor(quantity)),
     action: rowAction,
-    row: {
-      name: row.name,
-      sessionId: row.sessionId,
-      actionLabel: row.action,
-      part: row.part,
-      shelf: row.shelf,
-      quantity: row.quantity,
-      locked: row.locked,
-      time: row.time ?? new Date().toISOString(),
-    },
+    row: sessionRowPayload(row),
   });
 
   if (result.ok) {
@@ -516,16 +515,7 @@ export async function setSheetLockEvent(
     number,
     locked: Boolean(locked),
     action: rowAction,
-    row: {
-      name: row.name,
-      sessionId: row.sessionId,
-      actionLabel: row.action,
-      part: row.part,
-      shelf: row.shelf,
-      quantity: row.quantity,
-      locked: row.locked,
-      time: row.time ?? new Date().toISOString(),
-    },
+    row: sessionRowPayload(row),
   });
 
   if (result.ok) {

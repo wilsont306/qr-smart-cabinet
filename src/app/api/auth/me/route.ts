@@ -12,6 +12,8 @@ export async function GET() {
       name: session.displayName,
       email: session.user.email,
       trackerSessionId: session.trackerSessionId ?? null,
+      teamNumber: session.teamNumber ?? null,
+      roboticsLevel: session.roboticsLevel ?? null,
     },
   });
 }

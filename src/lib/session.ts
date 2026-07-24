@@ -15,6 +15,8 @@ export interface ResolvedSession {
   user: User;
   trackerSessionId?: string;
   displayName: string;
+  teamNumber?: string;
+  roboticsLevel?: "FTC" | "FRC" | "FLL";
 }
 
 interface SessionClaims {
@@ -23,6 +25,8 @@ interface SessionClaims {
   uid: string;
   name: string;
   sid?: string;
+  team?: string;
+  level?: "FTC" | "FRC" | "FLL";
   exp: number;
   iat: number;
 }
@@ -102,6 +106,8 @@ function hydrateFromClaims(claims: SessionClaims): ResolvedSession | null {
     user,
     trackerSessionId: claims.sid,
     displayName: claims.name || user.name,
+    teamNumber: claims.team,
+    roboticsLevel: claims.level,
   };
 }
 
@@ -109,6 +115,8 @@ function issueClaims(input: {
   userId: string;
   displayName: string;
   trackerSessionId?: string;
+  teamNumber?: string;
+  roboticsLevel?: "FTC" | "FRC" | "FLL";
 }): { token: string; maxAge: number; claims: SessionClaims } {
   const now = Date.now();
   const claims: SessionClaims = {
@@ -117,6 +125,8 @@ function issueClaims(input: {
     uid: input.userId,
     name: input.displayName,
     sid: input.trackerSessionId,
+    team: input.teamNumber,
+    level: input.roboticsLevel,
     iat: now,
     exp: now + SESSION_TTL_MS,
   };
@@ -132,12 +142,26 @@ export function createSession(userId: string) {
   return issueClaims({ userId, displayName: user.name });
 }
 
-/** Name-only tracker session for workshop use — grants all drawers for the visit. */
-export function createTrackerSession(displayName: string) {
+/** Workshop tracker session — name + team # + FTC/FRC/FLL for the visit. */
+export function createTrackerSession(
+  displayName: string,
+  opts?: { teamNumber?: string; roboticsLevel?: "FTC" | "FRC" | "FLL" },
+) {
   seed();
 
   const trimmed = displayName.trim().slice(0, 80);
   if (!trimmed) throw new Error("name_required");
+
+  const team = String(opts?.teamNumber ?? "")
+    .trim()
+    .replace(/\D/g, "")
+    .slice(0, 6);
+  if (!team) throw new Error("team_required");
+
+  const level = opts?.roboticsLevel;
+  if (level !== "FTC" && level !== "FRC" && level !== "FLL") {
+    throw new Error("level_required");
+  }
 
   const trackerSessionId = crypto.randomUUID();
   const userId = `u_trk_${trackerSessionId.replace(/-/g, "").slice(0, 16)}`;
@@ -149,6 +173,8 @@ export function createTrackerSession(displayName: string) {
     userId,
     displayName: trimmed,
     trackerSessionId,
+    teamNumber: team,
+    roboticsLevel: level,
   });
 
   return {
@@ -156,6 +182,8 @@ export function createTrackerSession(displayName: string) {
     maxAge,
     trackerSessionId: claims.sid!,
     displayName: trimmed,
+    teamNumber: team,
+    roboticsLevel: level,
     userId,
   };
 }

@@ -7,9 +7,13 @@ import { pullStockFromSheets, sheetsEnabled } from "@/lib/sheets";
 
 interface TrackerBody {
   name?: unknown;
+  teamNumber?: unknown;
+  roboticsLevel?: unknown;
 }
 
-// POST /api/auth/tracker — start a name-only visit session (workshop tracker).
+const LEVELS = new Set(["FTC", "FRC", "FLL"]);
+
+// POST /api/auth/tracker — start a workshop visit session (name + team + level).
 export async function POST(req: Request) {
   seed();
   const ip = clientIp(req);
@@ -31,17 +35,43 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid_name" }, { status: 400 });
   }
 
+  const teamNumber =
+    typeof body.teamNumber === "string" || typeof body.teamNumber === "number"
+      ? String(body.teamNumber).trim().replace(/\D/g, "").slice(0, 6)
+      : "";
+  if (!teamNumber) {
+    return NextResponse.json({ error: "invalid_team" }, { status: 400 });
+  }
+
+  const roboticsLevel =
+    typeof body.roboticsLevel === "string" ? body.roboticsLevel.trim().toUpperCase() : "";
+  if (!LEVELS.has(roboticsLevel)) {
+    return NextResponse.json({ error: "invalid_level" }, { status: 400 });
+  }
+
   try {
-    const { token, maxAge, trackerSessionId, displayName, userId } =
-      createTrackerSession(name);
-    audit({ type: "auth.tracker_session", userId, detail: trackerSessionId });
+    const session = createTrackerSession(name, {
+      teamNumber,
+      roboticsLevel: roboticsLevel as "FTC" | "FRC" | "FLL",
+    });
+    audit({
+      type: "auth.tracker_session",
+      userId: session.userId,
+      detail: `${session.trackerSessionId} team_${session.teamNumber} ${session.roboticsLevel}`,
+    });
 
     const res = NextResponse.json({
       ok: true,
-      trackerSessionId,
-      user: { id: userId, name: displayName, email: "" },
+      trackerSessionId: session.trackerSessionId,
+      user: {
+        id: session.userId,
+        name: session.displayName,
+        email: "",
+        teamNumber: session.teamNumber,
+        roboticsLevel: session.roboticsLevel,
+      },
     });
-    res.cookies.set(setSessionCookie(token, maxAge));
+    res.cookies.set(setSessionCookie(session.token, session.maxAge));
 
     if (sheetsEnabled()) {
       after(() => {
@@ -51,6 +81,6 @@ export async function POST(req: Request) {
 
     return res;
   } catch {
-    return NextResponse.json({ error: "invalid_name" }, { status: 400 });
+    return NextResponse.json({ error: "invalid_checkin" }, { status: 400 });
   }
 }

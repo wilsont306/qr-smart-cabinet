@@ -19,7 +19,10 @@
  * or a plain https / Drive link. The app shows that photo on the drawer.
  *
  * Session tracker sheet (append-only from the app):
- *     Name | Time | Session ID | Action | Part | Shelf | Quantity | Locked?
+ *     Name | Time | Session ID | Action | Part | Shelf | Quantity | Locked? | Team # | Level
+ *
+ * Inventory may also have Team # / Robotics Level columns — those get stamped
+ * with the visitor's team when they take/return/unlock a drawer.
  */
 
 function doPost(e) {
@@ -801,6 +804,8 @@ function locateTable_() {
       else if (h === 'is locked' || h === 'locked' || h === 'locked?') col.locked = c + 1;
       else if (h === 'image' || h === 'images' || h === 'photo' || h === 'photos' || h === 'img' || h === 'picture') col.image = c + 1;
       else if (h === 'photo url' || h === 'image url' || h === 'image link' || h === 'img url' || h === 'picture url') col.imageUrl = c + 1;
+      else if (h === 'team #' || h === 'team#' || h === 'team' || h === 'team number' || h === 'team no' || h === 'team no.') col.team = c + 1;
+      else if (h === 'robotics level' || h === 'robotics le' || h === 'level' || h === 'program' || h === 'first program') col.level = c + 1;
       else if (h === 'session id' || h === 'sessionid') col.sessionId = c + 1;
     }
     // Must be inventory (Part + Quantity), not the session tracker tab.
@@ -833,7 +838,7 @@ function findRowByNumber_(t, number) {
   return -1;
 }
 
-// Session tracker: Name | Time | Session ID | Action | Part | Shelf | Quantity | Locked?
+// Session tracker: Name | Time | Session ID | Action | Part | Shelf | Quantity | Locked? | Team # | Level
 function locateSessionTable_() {
   var sheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
   for (var s = 0; s < sheets.length; s++) {
@@ -851,6 +856,8 @@ function locateSessionTable_() {
       else if (h === 'shelf' || h === 'drawer') col.shelf = c + 1;
       else if (h === 'quantity' || h === 'qty') col.quantity = c + 1;
       else if (h === 'locked?' || h === 'locked' || h === 'is locked') col.locked = c + 1;
+      else if (h === 'team #' || h === 'team#' || h === 'team' || h === 'team number' || h === 'team no' || h === 'team no.') col.team = c + 1;
+      else if (h === 'robotics level' || h === 'robotics le' || h === 'level' || h === 'program' || h === 'first program') col.level = c + 1;
     }
     if (col.name && col.sessionId && col.part && col.quantity && col.locked) {
       var lastRow = sheet.getLastRow();
@@ -887,8 +894,12 @@ function appendSessionRow_(row) {
   if (t.col.shelf) arr[t.col.shelf - 1] = row.shelf || '';
   if (t.col.quantity) arr[t.col.quantity - 1] = row.quantity || 0;
   if (t.col.locked) arr[t.col.locked - 1] = !!row.locked;
+  if (t.col.team) arr[t.col.team - 1] = row.teamNumber || '';
+  if (t.col.level) arr[t.col.level - 1] = row.roboticsLevel || '';
   t.sheet.getRange(sheetRow, 1, 1, t.width).setValues([arr]);
   colorSessionRow_(t, sheetRow, actionLabel, !!row.locked);
+  // Also stamp Team # / Level onto the inventory drawer row when those columns exist.
+  stampDrawerTeamLevel_(row.shelf, row.teamNumber, row.roboticsLevel);
   return 1;
 }
 
@@ -938,8 +949,30 @@ function updateSessionRow_(row) {
     actionLabel = mergeAction_(arr[t.col.action - 1], row.actionLabel);
     arr[t.col.action - 1] = actionLabel;
   }
+  if (t.col.team && row.teamNumber) arr[t.col.team - 1] = row.teamNumber;
+  if (t.col.level && row.roboticsLevel) arr[t.col.level - 1] = row.roboticsLevel;
   t.sheet.getRange(sheetRow, 1, 1, t.width).setValues([arr]);
   colorSessionRow_(t, sheetRow, actionLabel, !!row.locked);
+  stampDrawerTeamLevel_(row.shelf, row.teamNumber, row.roboticsLevel);
+  return 1;
+}
+
+/** Write Team # / Robotics Level onto the inventory row for this drawer. */
+function stampDrawerTeamLevel_(shelfOrNumber, teamNumber, roboticsLevel) {
+  if (!teamNumber && !roboticsLevel) return 0;
+  var t = locateTable_();
+  if (!t || (!t.col.team && !t.col.level)) return 0;
+  var number = parseDrawerNumber_(shelfOrNumber);
+  if (!number) return 0;
+  var rowIdx = findRowByNumber_(t, number);
+  if (rowIdx === -1) return 0;
+  var sheetRow = t.headerRow + 1 + rowIdx;
+  if (t.col.team && teamNumber) {
+    t.sheet.getRange(sheetRow, t.col.team).setValue(String(teamNumber));
+  }
+  if (t.col.level && roboticsLevel) {
+    t.sheet.getRange(sheetRow, t.col.level).setValue(String(roboticsLevel));
+  }
   return 1;
 }
 
