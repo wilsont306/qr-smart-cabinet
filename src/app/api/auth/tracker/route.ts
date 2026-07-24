@@ -74,8 +74,9 @@ export async function POST(req: Request) {
     res.cookies.set(setSessionCookie(session.token, session.maxAge));
 
     if (sheetsEnabled()) {
+      // Force a fresh pull for the next cabinet load — don't reuse a stale isolate cache.
       after(() => {
-        void pullStockFromSheets({ timeoutMs: 20000 });
+        void pullStockFromSheets({ force: true, timeoutMs: 20000 });
       });
     }
 

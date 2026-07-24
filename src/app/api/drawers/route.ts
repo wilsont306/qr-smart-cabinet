@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { after } from "next/server";
 import { db, seed } from "@/lib/store";
 import { canAccessDrawer } from "@/lib/security";
 import { currentUser } from "@/lib/session";
@@ -15,14 +14,12 @@ export async function GET() {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
 
-  // Never block the menu on Apps Script. Return in-memory stock immediately and
-  // start a background refresh on THIS isolate right away (after() keeps it alive).
-  const fresh = sheetsCacheFresh();
+  // Wait for a light sheet pull when this isolate is cold so the menu shows
+  // real Part/Quantity instead of seed placeholders (Refresh used to be required).
+  let fresh = sheetsCacheFresh();
   if (sheetsEnabled() && !fresh) {
-    const warming = pullStockFromSheets({ force: true, timeoutMs: 20000 });
-    after(() => {
-      void warming;
-    });
+    await pullStockFromSheets({ force: true, timeoutMs: 18000 });
+    fresh = sheetsCacheFresh();
   }
 
   const drawers = [...db.drawers.values()]

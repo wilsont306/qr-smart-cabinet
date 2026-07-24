@@ -138,8 +138,20 @@ export function SignInForm() {
         sessionStorage.setItem("cab_session_name", trimmedName);
         sessionStorage.setItem("cab_team_number", trimmedTeam);
         sessionStorage.setItem("cab_robotics_level", level);
+        sessionStorage.setItem("cab_need_sheet_sync", "1");
       } catch {
         // ignore
+      }
+      // Pull inventory before opening the cabinet so drawers match the sheet.
+      const hydrated = await api<{ drawers?: { id: string; label: string }[] }>(
+        "/api/sheets/hydrate",
+      );
+      if (hydrated.ok && Array.isArray(hydrated.data?.drawers) && hydrated.data.drawers.length) {
+        try {
+          sessionStorage.setItem("cab_drawers_boot", JSON.stringify(hydrated.data.drawers));
+        } catch {
+          // ignore
+        }
       }
       router.replace(next);
       return;
@@ -330,7 +342,7 @@ export function SignInForm() {
                     disabled={working || !levelReady}
                     style={{ background: accent }}
                   >
-                    <span>{working ? "Starting…" : "Continue"}</span>
+                    <span>{working ? "Loading cabinet…" : "Continue"}</span>
                     {!working && <ArrowIcon />}
                   </button>
                 </div>

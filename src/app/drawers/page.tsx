@@ -57,8 +57,19 @@ const INK = "#1C2B4A";
 const fronts = ["#FFFDF8", "#F7F0DF", "#FBF6EC"];
 const borders = ["#E6DCC4", "#DFD3B6", "#E4DAC1"];
 
-/** Instant first paint after sign-in — replaced as soon as /api/drawers returns. */
+/** Instant first paint — prefer last hydrated sheet snapshot, else placeholders. */
 function bootDrawers(): DrawerView[] {
+  try {
+    const raw = sessionStorage.getItem("cab_drawers_boot");
+    if (raw) {
+      const parsed = JSON.parse(raw) as DrawerView[];
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.label) {
+        return parsed;
+      }
+    }
+  } catch {
+    // ignore
+  }
   return Array.from({ length: 9 }, (_, i) => ({
     id: `__boot_${i + 1}`,
     cabinet: "Cabinet A",
@@ -75,6 +86,14 @@ function bootDrawers(): DrawerView[] {
     quantity: 0,
     stockVersion: 0,
   }));
+}
+
+function cacheDrawersBoot(list: DrawerView[]) {
+  try {
+    sessionStorage.setItem("cab_drawers_boot", JSON.stringify(list));
+  } catch {
+    // ignore
+  }
 }
 
 function readCachedSessionName(): string | null {
@@ -203,22 +222,51 @@ function DrawersPageInner() {
     }, 3 * 60 * 1000);
 
     void (async () => {
+      // After check-in, force a sheet pull on THIS isolate before trusting seed stock.
+      let needSync = false;
+      try {
+        needSync = sessionStorage.getItem("cab_need_sheet_sync") === "1";
+        if (needSync) sessionStorage.removeItem("cab_need_sheet_sync");
+      } catch {
+        // ignore
+      }
+
+      if (needSync) {
+        const hydrated = await api<{
+          ok?: boolean;
+          drawers?: DrawerView[];
+          sheetsFresh?: boolean;
+        }>("/api/sheets/hydrate");
+        if (!cancelled && hydrated.ok && Array.isArray(hydrated.data?.drawers) && hydrated.data.drawers.length) {
+          const list = applyLockHold(hydrated.data.drawers);
+          setDrawers(list);
+          setSheets(true);
+          setReady(true);
+          cacheDrawersBoot(list);
+          if (hydrated.data.sheetsFresh) return;
+        }
+      }
+
       const first = await fetchCabinet();
       if (cancelled || !first) return;
       setDrawers(applyLockHold(first.drawers));
       setSheets(first.sheets);
       setReady(true);
+      if (first.drawers.length && !first.drawers[0]?.id.startsWith("__boot_")) {
+        cacheDrawersBoot(first.drawers);
+      }
 
       if (!first.sheets || first.sheetsFresh) return;
 
       // Quietly keep asking until the sheet lands (cold Apps Script is slow).
-      for (let i = 0; i < 20; i++) {
-        await new Promise((r) => setTimeout(r, 750));
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 500));
         if (cancelled) return;
         const next = await fetchCabinet();
         if (!next) return;
         setDrawers(applyLockHold(next.drawers));
         setSheets(next.sheets);
+        if (next.drawers.length) cacheDrawersBoot(next.drawers);
         if (next.sheetsFresh) return;
       }
     })();
@@ -426,6 +474,11 @@ function SyncButton({
 
       if (Array.isArray(sync.data?.drawers) && sync.data.drawers.length) {
         onRefreshed(sync.data.drawers);
+        try {
+          sessionStorage.setItem("cab_drawers_boot", JSON.stringify(sync.data.drawers));
+        } catch {
+          // ignore
+        }
       } else {
         const next = await reload();
         if (!next) {
