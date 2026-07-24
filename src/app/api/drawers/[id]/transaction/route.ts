@@ -196,6 +196,8 @@ export async function POST(
       shelf: drawer.label,
       quantity,
       locked: !drawerOpen,
+      teamNumber: session.teamNumber,
+      roboticsLevel: session.roboticsLevel,
     });
   });
 

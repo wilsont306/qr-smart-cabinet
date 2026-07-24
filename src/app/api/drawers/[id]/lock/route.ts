@@ -81,6 +81,8 @@ export async function POST(
         shelf: drawer.label,
         quantity: qtyLogged,
         locked: true,
+        teamNumber: visit.teamNumber,
+        roboticsLevel: visit.roboticsLevel,
       },
       "update",
     );
