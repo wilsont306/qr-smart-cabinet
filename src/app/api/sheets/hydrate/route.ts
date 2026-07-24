@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db, seed } from "@/lib/store";
-import { canAccessDrawer } from "@/lib/security";
+import { LIMITS, canAccessDrawer, clientIp, rateLimit } from "@/lib/security";
 import { currentUser } from "@/lib/session";
 import { drawerView } from "@/lib/dto";
 import { pullStockFromSheets, sheetsEnabled } from "@/lib/sheets";
@@ -9,11 +9,23 @@ import { pullStockFromSheets, sheetsEnabled } from "@/lib/sheets";
  * GET /api/sheets/hydrate — force a light inventory pull and return drawers.
  * Used right after check-in so the cabinet opens on sheet data, not seed stock.
  */
-export async function GET() {
+export async function GET(req: Request) {
   seed();
 
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+
+  const gate = rateLimit(
+    `sheets_pull:${user.id}:${clientIp(req)}`,
+    LIMITS.sheetsPull.limit,
+    LIMITS.sheetsPull.windowMs,
+  );
+  if (!gate.ok) {
+    return NextResponse.json(
+      { error: "rate_limited" },
+      { status: 429, headers: { "Retry-After": String(gate.retryAfter) } },
+    );
+  }
 
   if (!sheetsEnabled()) {
     return NextResponse.json({ ok: false, error: "not_configured", drawers: [] });

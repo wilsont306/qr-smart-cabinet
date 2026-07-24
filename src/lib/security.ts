@@ -43,6 +43,9 @@ export const LIMITS = {
   // Workshop use needs many opens/takes per visit; PRD 10/hr was too tight in practice.
   unlock: { limit: PROD ? 60 : 200, windowMs: 60 * 60 * 1000 }, // 60 / hour per user
   lookup: { limit: 60, windowMs: 60 * 1000 }, // drawer enumeration guard
+  // Sheets API / Apps Script — keep Google + Vercel spend bounded per visitor.
+  sheetsPull: { limit: PROD ? 20 : 100, windowMs: 60 * 60 * 1000 }, // hydrate/sync
+  sheetsPing: { limit: PROD ? 30 : 120, windowMs: 60 * 1000 },
   drawerCooldownMs: 5 * 1000, // between opens on the same drawer
 };
 

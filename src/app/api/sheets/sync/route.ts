@@ -1,17 +1,29 @@
 import { NextResponse } from "next/server";
 import { db, seed } from "@/lib/store";
-import { canAccessDrawer } from "@/lib/security";
+import { LIMITS, canAccessDrawer, clientIp, rateLimit } from "@/lib/security";
 import { currentUser } from "@/lib/session";
 import { drawerView } from "@/lib/dto";
 import { sheetsEnabled, syncSheet } from "@/lib/sheets";
 
 // POST /api/sheets/sync — re-read inventory from Google Sheets (never overwrite).
 // Soft-fails with HTTP 200 so the UI can still refresh drawer cards locally.
-export async function POST() {
+export async function POST(req: Request) {
   seed();
 
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+
+  const gate = rateLimit(
+    `sheets_pull:${user.id}:${clientIp(req)}`,
+    LIMITS.sheetsPull.limit,
+    LIMITS.sheetsPull.windowMs,
+  );
+  if (!gate.ok) {
+    return NextResponse.json(
+      { ok: false, error: "rate_limited" },
+      { status: 429, headers: { "Retry-After": String(gate.retryAfter) } },
+    );
+  }
 
   if (!sheetsEnabled()) {
     return NextResponse.json({ ok: false, error: "not_configured" });

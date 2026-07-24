@@ -2,16 +2,20 @@ import { NextResponse } from "next/server";
 import { audit, db, seed } from "@/lib/store";
 import { createSession, currentUser, setSessionCookie } from "@/lib/session";
 
-// Demo convenience: establish a session for the default demo user without the
-// OTP screen, so the app opens straight onto the scan menu. This exists ONLY
-// because auth is stubbed for the demo — production uses the real passkey/OTP
-// sign-in and this route would not ship.
-const DEFAULT_USER = "u_alex"; // seeded user with access to all drawers
+// Demo convenience ONLY for local/dev. Disabled in production so anyone on the
+// internet cannot mint a full-access session and burn Sheets/Vercel quota.
 
-// GET variant: establishes the demo session and redirects straight to the main
-// menu as a normal top-level navigation. This is the robust path — no
-// client-side fetch to hang, and Set-Cookie on a redirect is always honoured.
+const DEFAULT_USER = "u_alex";
+
+function demoAllowed(): boolean {
+  return process.env.NODE_ENV !== "production" || process.env.ALLOW_DEMO_LOGIN === "1";
+}
+
 export async function GET(req: Request) {
+  if (!demoAllowed()) {
+    return NextResponse.json({ error: "not_found" }, { status: 404 });
+  }
+
   seed();
   const menu = new URL("/drawers", req.url);
 
@@ -30,9 +34,12 @@ export async function GET(req: Request) {
 }
 
 export async function POST() {
+  if (!demoAllowed()) {
+    return NextResponse.json({ error: "not_found" }, { status: 404 });
+  }
+
   seed();
 
-  // Already signed in? Reuse the existing session.
   const existing = await currentUser();
   if (existing) return NextResponse.json({ ok: true });
 

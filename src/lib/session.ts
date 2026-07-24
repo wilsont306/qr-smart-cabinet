@@ -33,9 +33,11 @@ interface SessionClaims {
 
 function sessionSecret(): string {
   const fromEnv = process.env.SESSION_SECRET || process.env.SHEETS_SECRET;
-  if (fromEnv && fromEnv.length >= 16) return fromEnv;
-  // Shared fallback so multi-instance deploys still agree when env is missing.
-  // Prefer setting SESSION_SECRET on Vercel for production.
+  if (fromEnv && fromEnv.length >= 32) return fromEnv;
+  if (process.env.NODE_ENV === "production") {
+    // Refuse the shared fallback in production — forged cookies would be free.
+    throw new Error("SESSION_SECRET_required");
+  }
   return "qr-smart-cabinet-session-dev-v1";
 }
 
