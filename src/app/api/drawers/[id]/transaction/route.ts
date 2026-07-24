@@ -189,8 +189,8 @@ export async function POST(
   const item = db.items.get(drawer.itemId);
   const partName = item?.name ?? drawer.itemId;
   const drawerOpen = db.openDrawer.has(drawer.id);
-  // Always log Take/Return — "Unlock + …" was confusing when people only return
-  // after a normal unlock (unlock is already its own tracker row).
+  // First take/return while unlocked updates the Unlock row → Unlock + Take/Return.
+  // Later takes/returns append as plain Take/Return.
   const action = intent === "take" ? "Take" : "Return";
 
   audit({
