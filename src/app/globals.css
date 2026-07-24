@@ -1199,6 +1199,7 @@ body.smart-root {
   width: 4.5ch;
   margin: 0 auto;
   border: none;
+  border-radius: 8px;
   background: transparent;
   color: inherit;
   font-size: 22px;
@@ -1207,11 +1208,11 @@ body.smart-root {
   text-align: center;
   outline: none;
   caret-color: var(--smart-accent, #cf2233);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--smart-accent, #cf2233) 55%, transparent);
 }
 
 .smart-stepper-input:focus {
-  border-radius: 8px;
-  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--smart-accent, #cf2233) 55%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--smart-accent, #cf2233);
 }
 
 .smart-stepper span {
