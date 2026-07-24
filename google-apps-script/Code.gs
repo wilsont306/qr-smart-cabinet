@@ -203,40 +203,54 @@ function readCellImageDetail_(sheet, sheetRow, imageCol) {
   var range = sheet.getRange(sheetRow, imageCol);
   var a1 = range.getA1Notation();
   var value = range.getValue();
+  var formula = String(range.getFormula() || '');
   detail.valueType = value === null || value === ''
     ? 'empty'
     : typeof value === 'string'
       ? 'string'
       : String(value);
 
-  // Prefer a freshly Insert→Image CellImage over a stale =IMAGE("old url") formula.
-  // Otherwise replacing the picture never updates the app.
-  try {
-    var isCellImage =
-      value &&
-      (typeof value.getContentUrl === 'function' || String(value) === 'CellImage');
-    if (isCellImage && typeof value.getContentUrl === 'function') {
-      var fromCell = cellImageToHostedUrl_(value, sheet.getSheetId() + '!' + a1, detail);
-      if (fromCell) {
-        detail.url = fromCell;
-        detail.source = 'cell';
-        persistImageFormula_(range, fromCell);
-        return detail;
-      }
+  var isCellImage =
+    value &&
+    (typeof value.getContentUrl === 'function' || String(value) === 'CellImage');
+
+  // 1) Fresh Insert→Image CellImage (must win over a stale =IMAGE formula).
+  if (isCellImage) {
+    var fromCell = cellImageToHostedUrl_(value, sheet.getSheetId() + '!' + a1, detail);
+    if (fromCell) {
+      detail.url = fromCell;
+      detail.source = 'cell';
+      detail.error = '';
+      persistImageFormula_(range, fromCell);
+      return detail;
     }
-  } catch (e) {
-    detail.error = 'cell:' + String(e);
+    // CellImage is present but Google blocked getContentUrl — do NOT keep the
+    // old =IMAGE(...) URL (that looks like "upload failed" / wrong photo).
+    var fromOverlayWhileCell = findOverlayImageUrl_(sheet, sheetRow, imageCol, detail);
+    if (fromOverlayWhileCell) {
+      detail.url = fromOverlayWhileCell;
+      detail.source = 'overlay';
+      detail.error = '';
+      persistImageFormula_(range, fromOverlayWhileCell);
+      return detail;
+    }
+    detail.error =
+      detail.error ||
+      'cellimage_blocked_paste_https_url_or_use_image_over_cells';
+    return detail;
   }
 
+  // 2) Floating "Image over cells"
   var fromOverlay = findOverlayImageUrl_(sheet, sheetRow, imageCol, detail);
   if (fromOverlay) {
     detail.url = fromOverlay;
     detail.source = 'overlay';
+    detail.error = '';
     persistImageFormula_(range, fromOverlay);
     return detail;
   }
 
-  var formula = String(range.getFormula() || '');
+  // 3) =IMAGE("url") or plain https / Drive link in the cell
   if (formula) {
     var m = formula.match(/^=\s*IMAGE\s*\(\s*["']([^"']+)["']/i);
     if (m && m[1]) {
@@ -255,6 +269,8 @@ function readCellImageDetail_(sheet, sheetRow, imageCol) {
     if (asUrl) {
       detail.url = asUrl;
       detail.source = 'url';
+      detail.error = '';
+      if (asUrl.indexOf('http') === 0) persistImageFormula_(range, asUrl);
       return detail;
     }
   }
@@ -398,17 +414,28 @@ function normalizeImageUrl_(raw) {
 /**
  * CellImage → Drive-hosted view URL (or small data URL).
  * Content URLs require the script's OAuth token — plain UrlFetch gets 403.
+ * Google sometimes throws on getContentUrl for in-cell images — we retry, then fail.
  */
 function cellImageToHostedUrl_(cellImage, cacheKey, detail) {
   var contentUrl = '';
-  try {
-    contentUrl = cellImage.getContentUrl();
-  } catch (e) {
-    if (detail) detail.error = 'getContentUrl:' + String(e);
-    return '';
+  var lastErr = '';
+  for (var attempt = 0; attempt < 3; attempt++) {
+    try {
+      SpreadsheetApp.flush();
+      if (attempt > 0) Utilities.sleep(400 * attempt);
+      contentUrl = cellImage.getContentUrl();
+      if (contentUrl) break;
+    } catch (e) {
+      lastErr = String(e);
+      contentUrl = '';
+    }
   }
   if (!contentUrl) {
-    if (detail) detail.error = 'empty_content_url';
+    if (detail) {
+      detail.error = lastErr
+        ? 'getContentUrl:' + lastErr
+        : 'empty_content_url';
+    }
     return '';
   }
 
@@ -641,25 +668,72 @@ function onOpen() {
     .createMenu('QR Cabinet')
     .addItem('Authorize image access', 'authorizeImageAccess')
     .addItem('Connect images to app', 'publishImagesToApp')
+    .addItem('Set image from URL (selected cell)', 'setImageFromUrlPrompt_')
     .addItem('Debug drawer photos', 'debugDrawerPhotos')
     .addToUi();
 }
 
 /**
+ * Reliable path when Insert→Image in cell cannot be read by Apps Script:
+ * paste any https / Drive link into the selected Image cell.
+ */
+function setImageFromUrlPrompt_() {
+  var ui = SpreadsheetApp.getUi();
+  var range = SpreadsheetApp.getActiveRange();
+  if (!range) {
+    ui.alert('Select an Image cell first.');
+    return;
+  }
+  var res = ui.prompt(
+    'Set drawer image',
+    'Paste an https image URL or Google Drive file link:',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+  var raw = String(res.getResponseText() || '').trim();
+  if (!raw) {
+    ui.alert('No URL entered.');
+    return;
+  }
+  var detail = { error: '', bytes: 0, http: 0 };
+  var url = resolveImageUrl_(raw, detail);
+  if (!url || url.indexOf('http') !== 0) {
+    ui.alert('Could not use that link. ' + (detail.error || 'Need a public https or Drive URL.'));
+    return;
+  }
+  // Host a copy in the QR photo folder when possible (stable thumbnail URL).
+  try {
+    var driveId = extractDriveId_(url);
+    if (driveId) {
+      var hosted = publishDriveFile_(driveId, detail);
+      if (hosted) url = hosted;
+    } else {
+      var blob = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true }).getBlob();
+      if (blob && (blob.getBytes() || []).length) {
+        var hosted2 = hostImageBlob_('url:' + Utilities.getUuid(), blob, detail);
+        if (hosted2 && hosted2.indexOf('http') === 0) url = hosted2;
+      }
+    }
+  } catch (e) {
+    // keep original url
+  }
+  persistImageFormula_(range, url);
+  ui.alert('Image set. Open the app and tap Refresh.');
+}
+
+/**
  * One-shot: host every Image-column picture on Drive and write =IMAGE("url")
  * into that cell so the web app can read it on Refresh.
- *
- * Tip: if the execution log spins forever, check the spreadsheet tab — alerts
- * open there, not in the script editor. Prefer Logger output below.
  */
 function publishImagesToApp() {
   var t = locateTable_();
   if (!t || !t.col.image) {
-    Logger.log('Add an Image column header (Image / Photo / Img) first.');
+    SpreadsheetApp.getUi().alert('Add an Image column header (Image / Photo / Img) first.');
     return;
   }
   var linked = 0;
   var failed = 0;
+  var notes = [];
   for (var i = 0; i < t.rows.length; i++) {
     var row = t.rows[i];
     var n = t.col.drawer ? parseDrawerNumber_(row[t.col.drawer - 1]) : i + 1;
@@ -673,13 +747,23 @@ function publishImagesToApp() {
     } else {
       failed++;
       Logger.log('  fail valueType=' + detail.valueType + ' error=' + detail.error);
+      if (String(detail.error || '').indexOf('cellimage_blocked') === 0 ||
+          String(detail.error || '').indexOf('getContentUrl') === 0) {
+        notes.push('Drawer ' + n + ': in-cell image blocked — use QR Cabinet → Set image from URL');
+      }
     }
   }
-  Logger.log(
-    'Done. Connected ' + linked + ' image(s).' +
-      (failed ? ' ' + failed + ' row(s) had no readable image.' : '') +
-      ' Now open the app and tap Refresh.'
-  );
+  var msg =
+    'Connected ' + linked + ' image(s).' +
+    (failed ? ' ' + failed + ' row(s) had no readable image.' : '') +
+    (notes.length ? '\n\n' + notes.join('\n') : '') +
+    '\n\nThen open the app and tap Refresh.';
+  Logger.log(msg);
+  try {
+    SpreadsheetApp.getUi().alert(msg);
+  } catch (e) {
+    // editor-only run
+  }
 }
 
 function locateTable_() {
