@@ -933,6 +933,12 @@ function mergeAction_(existing, incoming) {
   if (!next) return prev;
   if (!prev) return next;
 
+  // Take/return after Unlock → single combined action on that session row.
+  if (prev === 'Unlock') {
+    if (next === 'Take' || next === 'Unlock + Take') return 'Unlock + Take';
+    if (next === 'Return' || next === 'Unlock + Return') return 'Unlock + Return';
+  }
+
   // Lock after a take/return → "Take + Lock" / "Return + Lock"
   if (next === 'Lock') {
     if (prev === 'Take' || prev === 'Unlock + Take') return 'Take + Lock';

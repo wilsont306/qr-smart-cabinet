@@ -40,7 +40,8 @@ const PROD = process.env.NODE_ENV === "production";
 
 export const LIMITS = {
   auth: { limit: PROD ? 5 : 100, windowMs: 15 * 60 * 1000 }, // 5 / 15 min (prod)
-  unlock: { limit: PROD ? 10 : 100, windowMs: 60 * 60 * 1000 }, // 10 / hour per user
+  // Workshop use needs many opens/takes per visit; PRD 10/hr was too tight in practice.
+  unlock: { limit: PROD ? 60 : 200, windowMs: 60 * 60 * 1000 }, // 60 / hour per user
   lookup: { limit: 60, windowMs: 60 * 1000 }, // drawer enumeration guard
   drawerCooldownMs: 5 * 1000, // between opens on the same drawer
 };

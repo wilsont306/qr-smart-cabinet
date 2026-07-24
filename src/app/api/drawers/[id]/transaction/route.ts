@@ -185,19 +185,27 @@ export async function POST(
   saveIdempotent(user.id, idempotencyKey, payload);
 
   // Mirror to the sheet after the response — stock + ledger are already committed.
+  // If the drawer is already open, UPDATE the Unlock row → "Unlock + Take/Return"
+  // instead of appending a second tracker line (which often failed under load).
   const qtyAfter = stock.quantity;
+  const sessionAction: "append" | "update" = drawerOpen ? "update" : "append";
   after(() => {
-    void setSheetTransaction(drawer, qtyAfter, {
-      name: trackerName,
-      sessionId: trackerSessionId,
-      action,
-      part: partName,
-      shelf: drawer.label,
-      quantity,
-      locked: !drawerOpen,
-      teamNumber: session.teamNumber,
-      roboticsLevel: session.roboticsLevel,
-    });
+    void setSheetTransaction(
+      drawer,
+      qtyAfter,
+      {
+        name: trackerName,
+        sessionId: trackerSessionId,
+        action,
+        part: partName,
+        shelf: drawer.label,
+        quantity,
+        locked: !drawerOpen,
+        teamNumber: session.teamNumber,
+        roboticsLevel: session.roboticsLevel,
+      },
+      sessionAction,
+    );
   });
 
   return NextResponse.json(payload);

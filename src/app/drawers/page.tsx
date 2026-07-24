@@ -868,7 +868,11 @@ function DrawerDetail({
   }
 
   async function confirm() {
-    if (!drawer || working || lockWorking) return;
+    if (!drawer || working) return;
+    if (lockWorking) {
+      setError("Wait for unlock/lock to finish, then try again.");
+      return;
+    }
     setWorking(true);
     setError(null);
 
@@ -913,7 +917,7 @@ function DrawerDetail({
     const messages: Record<string, string> = {
       stock_changed: "Stock changed. Review the latest count and try again.",
       insufficient_stock: "There is not enough stock for that quantity.",
-      rate_limited: "Limit reached. Try again later.",
+      rate_limited: "Too many takes this hour. Wait a bit, or sign out and back in.",
       drawer_disabled: "This drawer is disabled.",
     };
     setError(messages[data.error ?? ""] ?? "Could not record that. Try again.");
