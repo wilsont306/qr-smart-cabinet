@@ -48,18 +48,47 @@ let cachedLayout: SheetLayout | null = null;
 const LAYOUT_TTL_MS = 60_000;
 
 function readServiceAccount(): { email: string; privateKey: string } | null {
-  const jsonRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
+  let jsonRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
   if (jsonRaw) {
+    // Vercel / .env pastes often wrap the blob in quotes or double-encode it.
+    if (
+      (jsonRaw.startsWith('"') && jsonRaw.endsWith('"')) ||
+      (jsonRaw.startsWith("'") && jsonRaw.endsWith("'"))
+    ) {
+      jsonRaw = jsonRaw.slice(1, -1);
+    }
+    // Some UIs store the whole JSON with escaped quotes.
+    if (jsonRaw.includes('\\"') && !jsonRaw.includes('{"')) {
+      jsonRaw = jsonRaw.replace(/\\"/g, '"').replace(/\\n/g, "\\n");
+    }
     try {
       const parsed = JSON.parse(jsonRaw) as {
         client_email?: string;
         private_key?: string;
       };
       if (parsed.client_email && parsed.private_key) {
-        return { email: parsed.client_email, privateKey: parsed.private_key };
+        return {
+          email: parsed.client_email,
+          privateKey: parsed.private_key.replace(/\\n/g, "\n"),
+        };
       }
     } catch {
-      // fall through
+      // try base64-encoded JSON
+      try {
+        const decoded = Buffer.from(jsonRaw, "base64").toString("utf8");
+        const parsed = JSON.parse(decoded) as {
+          client_email?: string;
+          private_key?: string;
+        };
+        if (parsed.client_email && parsed.private_key) {
+          return {
+            email: parsed.client_email,
+            privateKey: parsed.private_key.replace(/\\n/g, "\n"),
+          };
+        }
+      } catch {
+        // fall through
+      }
     }
   }
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim();
@@ -73,6 +102,50 @@ function readServiceAccount(): { email: string; privateKey: string } | null {
 
 export function sheetsApiEnabled(): boolean {
   return Boolean(SPREADSHEET_ID && readServiceAccount());
+}
+
+/** Safe diagnostics — never returns key material. */
+export async function sheetsApiStatus(): Promise<{
+  configured: boolean;
+  spreadsheetIdSet: boolean;
+  credentialsOk: boolean;
+  canConnect: boolean;
+  error?: string;
+  inventorySheet?: string;
+  sessionSheet?: string;
+}> {
+  const spreadsheetIdSet = Boolean(SPREADSHEET_ID);
+  const creds = readServiceAccount();
+  if (!spreadsheetIdSet || !creds) {
+    return {
+      configured: false,
+      spreadsheetIdSet,
+      credentialsOk: Boolean(creds),
+      canConnect: false,
+      error: !spreadsheetIdSet
+        ? "missing_spreadsheet_id"
+        : "missing_or_invalid_service_account_json",
+    };
+  }
+  try {
+    const layout = await loadLayout(true);
+    return {
+      configured: true,
+      spreadsheetIdSet: true,
+      credentialsOk: true,
+      canConnect: true,
+      inventorySheet: layout.inventoryTitle,
+      sessionSheet: layout.sessionTitle,
+    };
+  } catch (err) {
+    return {
+      configured: true,
+      spreadsheetIdSet: true,
+      credentialsOk: true,
+      canConnect: false,
+      error: String(err),
+    };
+  }
 }
 
 function b64url(input: Buffer | string): string {
