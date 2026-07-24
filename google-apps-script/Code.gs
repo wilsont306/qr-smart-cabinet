@@ -202,21 +202,6 @@ function readCellImageDetail_(sheet, sheetRow, imageCol) {
   };
   var range = sheet.getRange(sheetRow, imageCol);
   var a1 = range.getA1Notation();
-  var formula = String(range.getFormula() || '');
-  if (formula) {
-    var m = formula.match(/^=\s*IMAGE\s*\(\s*["']([^"']+)["']/i);
-    if (m && m[1]) {
-      detail.url = resolveImageUrl_(m[1], detail);
-      detail.source = detail.url ? 'formula' : 'none';
-      if (!detail.url && !detail.error) detail.error = 'bad_formula_url';
-      // Rewrite to a browser-friendly Drive thumbnail URL when possible.
-      if (detail.url && detail.url.indexOf('http') === 0) {
-        persistImageFormula_(range, detail.url);
-      }
-      return detail;
-    }
-  }
-
   var value = range.getValue();
   detail.valueType = value === null || value === ''
     ? 'empty'
@@ -224,16 +209,8 @@ function readCellImageDetail_(sheet, sheetRow, imageCol) {
       ? 'string'
       : String(value);
 
-  if (typeof value === 'string' && value.trim()) {
-    var asUrl = resolveImageUrl_(value.trim(), detail);
-    if (asUrl) {
-      detail.url = asUrl;
-      detail.source = 'url';
-      return detail;
-    }
-  }
-
-  // Insert → Image → Image in cell → CellImage object
+  // Prefer a freshly Insert→Image CellImage over a stale =IMAGE("old url") formula.
+  // Otherwise replacing the picture never updates the app.
   try {
     var isCellImage =
       value &&
@@ -251,13 +228,35 @@ function readCellImageDetail_(sheet, sheetRow, imageCol) {
     detail.error = 'cell:' + String(e);
   }
 
-  // Floating images ("Image over cells") — same row, near Image column.
   var fromOverlay = findOverlayImageUrl_(sheet, sheetRow, imageCol, detail);
   if (fromOverlay) {
     detail.url = fromOverlay;
     detail.source = 'overlay';
     persistImageFormula_(range, fromOverlay);
     return detail;
+  }
+
+  var formula = String(range.getFormula() || '');
+  if (formula) {
+    var m = formula.match(/^=\s*IMAGE\s*\(\s*["']([^"']+)["']/i);
+    if (m && m[1]) {
+      detail.url = resolveImageUrl_(m[1], detail);
+      detail.source = detail.url ? 'formula' : 'none';
+      if (!detail.url && !detail.error) detail.error = 'bad_formula_url';
+      if (detail.url && detail.url.indexOf('http') === 0) {
+        persistImageFormula_(range, detail.url);
+      }
+      return detail;
+    }
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    var asUrl = resolveImageUrl_(value.trim(), detail);
+    if (asUrl) {
+      detail.url = asUrl;
+      detail.source = 'url';
+      return detail;
+    }
   }
 
   if (!detail.error) detail.error = 'no_image';
