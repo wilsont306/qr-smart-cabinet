@@ -23,6 +23,7 @@ type ColMap = Record<string, number>; // 0-based column index
 
 interface SheetLayout {
   inventoryTitle: string;
+  inventorySheetId: number;
   inventoryCols: ColMap;
   inventoryDrawerRow: Map<number, number>; // drawer# → 1-based sheet row
   sessionTitle: string;
@@ -337,6 +338,7 @@ async function loadLayout(force = false): Promise<SheetLayout> {
     );
 
   let inventoryTitle = "";
+  let inventorySheetId = -1;
   let inventoryCols: ColMap = {};
   let inventoryDrawerRow = new Map<number, number>();
   let sessionTitle = "";
@@ -367,6 +369,7 @@ async function loadLayout(force = false): Promise<SheetLayout> {
           : 0;
       if (!inventoryTitle || score >= 0) {
         inventoryTitle = title;
+        inventorySheetId = sheetId;
         inventoryCols = inv;
         inventoryDrawerRow = new Map();
         for (let i = 1; i < values.length; i++) {
@@ -392,7 +395,7 @@ async function loadLayout(force = false): Promise<SheetLayout> {
     }
   }
 
-  if (!inventoryTitle || inventoryCols.quantity == null) {
+  if (!inventoryTitle || inventoryCols.quantity == null || inventorySheetId < 0) {
     throw new Error("inventory_sheet_not_found");
   }
   if (!sessionTitle || sessionSheetId < 0) {
@@ -401,6 +404,7 @@ async function loadLayout(force = false): Promise<SheetLayout> {
 
   cachedLayout = {
     inventoryTitle,
+    inventorySheetId,
     inventoryCols,
     inventoryDrawerRow,
     sessionTitle,
@@ -455,7 +459,170 @@ export async function apiSetLocked(
     row,
     locked,
   );
+  try {
+    await colorInventoryLocked(
+      layout.inventorySheetId,
+      row,
+      layout.inventoryCols.locked,
+      locked,
+    );
+  } catch {
+    // Value write succeeded; coloring is best-effort.
+  }
   return true;
+}
+
+function hexColor(hex: string): { red: number; green: number; blue: number } {
+  const h = hex.replace("#", "").trim();
+  return {
+    red: parseInt(h.slice(0, 2), 16) / 255,
+    green: parseInt(h.slice(2, 4), 16) / 255,
+    blue: parseInt(h.slice(4, 6), 16) / 255,
+  };
+}
+
+function actionColors(actionLabel: string): {
+  row: string;
+  action: string;
+  text: string;
+} {
+  const a = String(actionLabel || "").trim();
+  if (a === "Take" || a === "Unlock + Take" || a === "Take + Lock") {
+    return { row: "#FCE8E6", action: "#EA4335", text: "#FFFFFF" };
+  }
+  if (a === "Return" || a === "Unlock + Return" || a === "Return + Lock") {
+    return { row: "#E6F4EA", action: "#34A853", text: "#FFFFFF" };
+  }
+  if (a === "Unlock") {
+    return { row: "#E8F0FE", action: "#1A73E8", text: "#FFFFFF" };
+  }
+  if (a === "Lock") {
+    return { row: "#F1F3F4", action: "#5F6368", text: "#FFFFFF" };
+  }
+  return { row: "#FFFFFF", action: "#E8EAED", text: "#202124" };
+}
+
+function cellFormatRequest(
+  sheetId: number,
+  row1Based: number,
+  col0Based: number,
+  background: string,
+  fontColor?: string,
+  bold?: boolean,
+) {
+  const format: Record<string, unknown> = {
+    backgroundColor: hexColor(background),
+  };
+  if (fontColor) format.textFormat = { foregroundColor: hexColor(fontColor), bold: Boolean(bold) };
+  else if (bold) format.textFormat = { bold: true };
+  return {
+    repeatCell: {
+      range: {
+        sheetId,
+        startRowIndex: row1Based - 1,
+        endRowIndex: row1Based,
+        startColumnIndex: col0Based,
+        endColumnIndex: col0Based + 1,
+      },
+      cell: { userEnteredFormat: format },
+      fields: fontColor || bold
+        ? "userEnteredFormat(backgroundColor,textFormat)"
+        : "userEnteredFormat.backgroundColor",
+    },
+  };
+}
+
+async function colorSessionRow(
+  layout: SheetLayout,
+  sheetRow: number,
+  actionLabel: string,
+  locked: boolean,
+): Promise<void> {
+  const cols = layout.sessionCols;
+  const width = Math.max(...Object.values(cols), 0) + 1;
+  const colors = actionColors(actionLabel);
+  const requests: unknown[] = [
+    {
+      repeatCell: {
+        range: {
+          sheetId: layout.sessionSheetId,
+          startRowIndex: sheetRow - 1,
+          endRowIndex: sheetRow,
+          startColumnIndex: 0,
+          endColumnIndex: width,
+        },
+        cell: {
+          userEnteredFormat: { backgroundColor: hexColor(colors.row) },
+        },
+        fields: "userEnteredFormat.backgroundColor",
+      },
+    },
+  ];
+  if (cols.action != null) {
+    requests.push(
+      cellFormatRequest(
+        layout.sessionSheetId,
+        sheetRow,
+        cols.action,
+        colors.action,
+        colors.text,
+        true,
+      ),
+    );
+  }
+  if (cols.locked != null) {
+    requests.push(
+      cellFormatRequest(
+        layout.sessionSheetId,
+        sheetRow,
+        cols.locked,
+        locked ? "#5F6368" : "#34A853",
+        "#FFFFFF",
+        true,
+      ),
+    );
+  }
+  if (cols.quantity != null) {
+    requests.push(
+      cellFormatRequest(
+        layout.sessionSheetId,
+        sheetRow,
+        cols.quantity,
+        colors.row,
+        undefined,
+        true,
+      ),
+    );
+  }
+  const res = await sheetsFetch(":batchUpdate", {
+    method: "POST",
+    body: JSON.stringify({ requests }),
+  });
+  if (!res.ok) throw new Error(`color_session_http_${res.status}`);
+}
+
+async function colorInventoryLocked(
+  sheetId: number,
+  row1Based: number,
+  col0Based: number,
+  locked: boolean,
+): Promise<void> {
+  const res = await sheetsFetch(":batchUpdate", {
+    method: "POST",
+    body: JSON.stringify({
+      requests: [
+        cellFormatRequest(
+          sheetId,
+          row1Based,
+          col0Based,
+          locked ? "#5F6368" : "#34A853",
+          "#FFFFFF",
+          true,
+        ),
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`color_lock_http_${res.status}`);
 }
 
 function mergeAction(existing: string, incoming: string): string {
@@ -538,6 +705,15 @@ export async function apiAppendSession(row: SessionWriteRow): Promise<boolean> {
     body: JSON.stringify({ values }),
   });
   if (!res.ok) throw new Error(`prepend_http_${res.status}`);
+  try {
+    const finalAction =
+      cols.action != null
+        ? String(values[0][cols.action] ?? row.actionLabel)
+        : row.actionLabel;
+    await colorSessionRow(layout, 2, finalAction, !!row.locked);
+  } catch {
+    // Values landed; colors are best-effort.
+  }
   return true;
 }
 
@@ -592,6 +768,17 @@ export async function apiUpdateSession(row: SessionWriteRow): Promise<boolean> {
     body: JSON.stringify({ values: [next] }),
   });
   if (!put.ok) throw new Error(`session_update_http_${put.status}`);
+  try {
+    const finalAction =
+      cols.action != null
+        ? String(next[cols.action] ?? row.actionLabel)
+        : row.actionLabel;
+    const finalLocked =
+      cols.locked != null ? Boolean(next[cols.locked]) : !!row.locked;
+    await colorSessionRow(layout, sheetRow, finalAction, finalLocked);
+  } catch {
+    // Values landed; colors are best-effort.
+  }
   return true;
 }
 

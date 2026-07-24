@@ -914,10 +914,9 @@ function appendSessionRow_(row) {
   if (t.col.team) arr[t.col.team - 1] = row.teamNumber || '';
   if (t.col.level) arr[t.col.level - 1] = row.roboticsLevel || '';
   t.sheet.getRange(sheetRow, 1, 1, t.width).setValues([arr]);
+  colorSessionRow_(t, sheetRow, actionLabel, !!row.locked);
   return 1;
 }
-
-function mergeAction_(existing, incoming) {
   var prev = String(existing || '').trim();
   var next = String(incoming || '').trim();
   if (!next) return prev;
@@ -972,6 +971,7 @@ function updateSessionRow_(row) {
   if (t.col.team && row.teamNumber) arr[t.col.team - 1] = row.teamNumber;
   if (t.col.level && row.roboticsLevel) arr[t.col.level - 1] = row.roboticsLevel;
   t.sheet.getRange(sheetRow, 1, 1, t.width).setValues([arr]);
+  colorSessionRow_(t, sheetRow, actionLabel, !!row.locked);
   return 1;
 }
 
