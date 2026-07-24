@@ -926,6 +926,10 @@ function DrawerDetail({
       setError("Wait for unlock/lock to finish, then try again.");
       return;
     }
+    if (drawer.locked) {
+      setError("Unlock the drawer before taking or returning parts.");
+      return;
+    }
     setWorking(true);
     setError(null);
 
@@ -972,6 +976,8 @@ function DrawerDetail({
       insufficient_stock: "There is not enough stock for that quantity.",
       rate_limited: "Too many takes this hour. Wait a bit, or sign out and back in.",
       drawer_disabled: "This drawer is disabled.",
+      drawer_locked: "Unlock the drawer before taking or returning parts.",
+      not_open: "Someone else has this drawer open.",
     };
     setError(messages[data.error ?? ""] ?? "Could not record that. Try again.");
   }
@@ -1136,16 +1142,19 @@ function DrawerDetail({
           disabled={
             working ||
             lockWorking ||
+            drawer.locked ||
             drawer.status === "disabled" ||
             (mode === "take" && drawer.quantity === 0)
           }
-          style={{ background: accent }}
+          style={{ background: accent, opacity: drawer.locked ? 0.55 : 1 }}
         >
           {working
             ? "Saving…"
-            : mode === "take"
-              ? `Take ${clampedQty}`
-              : `Return ${clampedQty}`}
+            : drawer.locked
+              ? "Unlock to take"
+              : mode === "take"
+                ? `Take ${clampedQty}`
+                : `Return ${clampedQty}`}
         </button>
       </div>
     </div>

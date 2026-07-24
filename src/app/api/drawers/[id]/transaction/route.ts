@@ -93,6 +93,34 @@ export async function POST(
     return NextResponse.json({ error: "drawer_disabled" }, { status: 409 });
   }
 
+  // Take/return only while this drawer is unlocked for the current visit.
+  const openSessionId = db.openDrawer.get(drawer.id);
+  if (!openSessionId) {
+    audit({
+      type: "transaction.denied_locked",
+      userId: user.id,
+      drawerId: drawer.id,
+      detail: intent,
+    });
+    return NextResponse.json(
+      { error: "drawer_locked", drawer: drawerView(drawer, db.stock.get(drawer.id)!) },
+      { status: 409 },
+    );
+  }
+  const openSession = db.unlockSessions.get(openSessionId);
+  if (openSession && openSession.userId !== user.id) {
+    audit({
+      type: "transaction.denied_not_holder",
+      userId: user.id,
+      drawerId: drawer.id,
+      detail: openSession.userId,
+    });
+    return NextResponse.json(
+      { error: "not_open", drawer: drawerView(drawer, db.stock.get(drawer.id)!) },
+      { status: 409 },
+    );
+  }
+
   // Never pull inventory mid-mutation: that races quantity/lock writes.
   const stock = db.stock.get(drawer.id)!;
 
