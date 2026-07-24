@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { clientIp, rateLimit } from "@/lib/security";
+import { LIMITS, clientIp, rateLimit } from "@/lib/security";
 import { pingSheets, sheetsEnabled } from "@/lib/sheets";
 
 /**
@@ -11,7 +11,11 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "not_configured" }, { status: 503 });
   }
 
-  const gate = rateLimit(`sheets_ping:${clientIp(req)}`, 30, 60_000);
+  const gate = rateLimit(
+    `sheets_ping:${clientIp(req)}`,
+    LIMITS.sheetsPing.limit,
+    LIMITS.sheetsPing.windowMs,
+  );
   if (!gate.ok) {
     return NextResponse.json({ ok: false, error: "rate_limited" }, { status: 429 });
   }

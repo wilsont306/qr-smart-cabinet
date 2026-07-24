@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { after } from "next/server";
-import { clientIp, rateLimit } from "@/lib/security";
+import { LIMITS, clientIp, rateLimit } from "@/lib/security";
 import { pullStockFromSheets, sheetsCacheFresh, sheetsEnabled } from "@/lib/sheets";
 
 /**
  * GET /api/sheets/preload — start warming inventory while the user is on sign-in.
- * Rate-limited; safe to call from the public check-in screen.
+ * Public but tightly rate-limited — this hits Google Sheets.
  * Always returns immediately — pull runs in after().
  */
 export async function GET(req: Request) {
@@ -13,7 +13,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "not_configured" }, { status: 503 });
   }
 
-  const gate = rateLimit(`sheets_preload:${clientIp(req)}`, 60, 60_000);
+  // Public endpoint — keep this low so bots can't farm Sheets/Vercel quota.
+  const gate = rateLimit(
+    `sheets_preload:${clientIp(req)}`,
+    LIMITS.sheetsPull.limit,
+    LIMITS.sheetsPull.windowMs,
+  );
   if (!gate.ok) {
     return NextResponse.json({ ok: false, error: "rate_limited" }, { status: 429 });
   }

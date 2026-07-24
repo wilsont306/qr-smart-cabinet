@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { audit, db, seed } from "@/lib/store";
-import { LIMITS, canAccessDrawer } from "@/lib/security";
+import { LIMITS, canAccessDrawer, clientIp, rateLimit } from "@/lib/security";
 import { currentSession } from "@/lib/session";
 import { drawerView } from "@/lib/dto";
 import {
@@ -12,7 +12,7 @@ import {
 
 // POST /api/drawers/{id}/lock — physical lock (no stock mutation).
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   seed();
@@ -21,6 +21,19 @@ export async function POST(
   const visit = await currentSession();
   if (!visit) return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   const user = visit.user;
+
+  const gate = rateLimit(
+    `lock:${user.id}`,
+    LIMITS.unlock.limit,
+    LIMITS.unlock.windowMs,
+  );
+  if (!gate.ok) {
+    audit({ type: "lock.rate_limited", userId: user.id, ip: clientIp(req) });
+    return NextResponse.json(
+      { error: "rate_limited" },
+      { status: 429, headers: { "Retry-After": String(gate.retryAfter) } },
+    );
+  }
 
   const drawerId =
     db.drawers.get(key)?.id ?? db.drawersByShortCode.get(key.toUpperCase());
@@ -34,7 +47,6 @@ export async function POST(
   const partName = item?.name ?? drawer.itemId;
   const openSessionId = db.openDrawer.get(drawer.id);
   if (!openSessionId) {
-    // Already locked in-app — still mirror Is Locked onto the inventory sheet.
     noteLocalLock(drawer.id, true);
     if (sheetsEnabled()) {
       try {
