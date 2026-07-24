@@ -26,6 +26,7 @@ interface SheetLayout {
   inventoryCols: ColMap;
   inventoryDrawerRow: Map<number, number>; // drawer# → 1-based sheet row
   sessionTitle: string;
+  sessionSheetId: number;
   sessionCols: ColMap;
   loadedAt: number;
 }
@@ -322,23 +323,27 @@ async function loadLayout(force = false): Promise<SheetLayout> {
   }
 
   const meta = await sheetsFetch("", {
-    query: { fields: "sheets.properties.title" },
+    query: { fields: "sheets.properties(sheetId,title)" },
   });
   if (!meta.ok) throw new Error(`meta_http_${meta.status}`);
   const metaBody = (await meta.json()) as {
-    sheets?: { properties?: { title?: string } }[];
+    sheets?: { properties?: { sheetId?: number; title?: string } }[];
   };
-  const titles = (metaBody.sheets ?? [])
-    .map((s) => s.properties?.title)
-    .filter((t): t is string => Boolean(t));
+  const sheetProps = (metaBody.sheets ?? [])
+    .map((s) => s.properties)
+    .filter(
+      (p): p is { sheetId: number; title: string } =>
+        typeof p?.sheetId === "number" && Boolean(p?.title),
+    );
 
   let inventoryTitle = "";
   let inventoryCols: ColMap = {};
   let inventoryDrawerRow = new Map<number, number>();
   let sessionTitle = "";
+  let sessionSheetId = -1;
   let sessionCols: ColMap = {};
 
-  for (const title of titles) {
+  for (const { title, sheetId } of sheetProps) {
     const res = await sheetsFetch(`/values/${encodeURIComponent(quoteTitle(title))}`, {
       query: { majorDimension: "ROWS" },
     });
@@ -382,6 +387,7 @@ async function loadLayout(force = false): Promise<SheetLayout> {
       sess.locked != null
     ) {
       sessionTitle = title;
+      sessionSheetId = sheetId;
       sessionCols = sess;
     }
   }
@@ -389,7 +395,7 @@ async function loadLayout(force = false): Promise<SheetLayout> {
   if (!inventoryTitle || inventoryCols.quantity == null) {
     throw new Error("inventory_sheet_not_found");
   }
-  if (!sessionTitle) {
+  if (!sessionTitle || sessionSheetId < 0) {
     throw new Error("session_sheet_not_found");
   }
 
@@ -398,6 +404,7 @@ async function loadLayout(force = false): Promise<SheetLayout> {
     inventoryCols,
     inventoryDrawerRow,
     sessionTitle,
+    sessionSheetId,
     sessionCols,
     loadedAt: Date.now(),
   };
@@ -502,25 +509,44 @@ export async function apiAppendSession(row: SessionWriteRow): Promise<boolean> {
   const cols = layout.sessionCols;
   const width = Math.max(...Object.values(cols), 0) + 1;
   const values = [buildSessionArray(cols, width, row)];
-  const range = `${quoteTitle(layout.sessionTitle)}!A:Z`;
-  const res = await sheetsFetch(`/values/${encodeURIComponent(range)}:append`, {
+
+  // Insert under the header so newest activity is at the top of Table2.
+  const insert = await sheetsFetch(":batchUpdate", {
     method: "POST",
-    query: {
-      valueInputOption: "USER_ENTERED",
-      insertDataOption: "INSERT_ROWS",
-    },
+    body: JSON.stringify({
+      requests: [
+        {
+          insertDimension: {
+            range: {
+              sheetId: layout.sessionSheetId,
+              dimension: "ROWS",
+              startIndex: 1,
+              endIndex: 2,
+            },
+            inheritFromBefore: false,
+          },
+        },
+      ],
+    }),
+  });
+  if (!insert.ok) throw new Error(`insert_row_http_${insert.status}`);
+
+  const range = `${quoteTitle(layout.sessionTitle)}!A2:${a1(width - 1, 2)}`;
+  const res = await sheetsFetch(`/values/${encodeURIComponent(range)}`, {
+    method: "PUT",
+    query: { valueInputOption: "USER_ENTERED" },
     body: JSON.stringify({ values }),
   });
-  if (!res.ok) throw new Error(`append_http_${res.status}`);
+  if (!res.ok) throw new Error(`prepend_http_${res.status}`);
   return true;
 }
 
 export async function apiUpdateSession(row: SessionWriteRow): Promise<boolean> {
   const layout = await loadLayout();
   const cols = layout.sessionCols;
-  // Read recent rows only — enough to find unlock→take merge targets.
+  // Newest rows sit under the header — scan the top of the tracker.
   const res = await sheetsFetch(
-    `/values/${encodeURIComponent(quoteTitle(layout.sessionTitle))}!A:Z`,
+    `/values/${encodeURIComponent(quoteTitle(layout.sessionTitle))}!A1:Z81`,
     { query: { majorDimension: "ROWS" } },
   );
   if (!res.ok) throw new Error(`session_read_http_${res.status}`);
@@ -529,18 +555,16 @@ export async function apiUpdateSession(row: SessionWriteRow): Promise<boolean> {
   if (values.length < 2) return apiAppendSession(row);
 
   const data = values.slice(1);
-  const scan = data.slice(-80);
-  const offset = data.length - scan.length;
   let found = -1;
-  for (let i = scan.length - 1; i >= 0; i--) {
-    const r = scan[i];
+  for (let i = 0; i < data.length; i++) {
+    const r = data[i];
     const sameSession =
       cols.sessionId != null &&
       String(r[cols.sessionId] ?? "") === String(row.sessionId);
     const samePart =
       cols.part == null || String(r[cols.part] ?? "") === String(row.part || "");
     if (sameSession && samePart) {
-      found = offset + i;
+      found = i;
       break;
     }
   }

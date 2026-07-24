@@ -869,12 +869,11 @@ function locateSessionTable_() {
   var meta = locateSessionHeaders_();
   if (!meta) return null;
   var lastRow = meta.sheet.getLastRow();
-  // Only scan the last 80 rows when updating — enough for unlock→take merge.
+  // Newest rows are inserted under the header — scan the top 80.
   var maxScan = 80;
   var numDataRows = Math.max(0, lastRow - 1);
   var scanRows = Math.min(numDataRows, maxScan);
-  var startRow = lastRow - scanRows + 1;
-  if (startRow < 2) startRow = 2;
+  var startRow = 2;
   var rows = scanRows > 0
     ? meta.sheet.getRange(startRow, 1, scanRows, meta.width).getValues()
     : [];
@@ -884,7 +883,7 @@ function locateSessionTable_() {
     col: meta.col,
     rows: rows,
     width: meta.width,
-    rowOffset: startRow - 2, // 0-based index into full data → add to get sheet row
+    rowOffset: 0,
   };
 }
 
@@ -896,11 +895,12 @@ function formatTime_(isoOrEmpty) {
 }
 
 function appendSessionRow_(row) {
-  // Headers only — don't read the whole tracker (slow as the log grows).
+  // Insert under the header so newest activity shows at the top of the tracker.
   var t = locateSessionHeaders_();
   if (!t) throw new Error('No sheet with Name, Session ID, Part, Quantity, and Locked? headers found.');
 
-  var sheetRow = Math.max(t.sheet.getLastRow() + 1, t.headerRow + 1);
+  var sheetRow = t.headerRow + 1;
+  t.sheet.insertRowAfter(t.headerRow);
   var actionLabel = row.actionLabel || '';
   var arr = new Array(t.width).fill('');
   if (t.col.name) arr[t.col.name - 1] = row.name || '';
@@ -977,7 +977,8 @@ function updateSessionRow_(row) {
 
 function findRowBySessionPart_(t, sessionId, part) {
   if (!t.col.sessionId || !sessionId) return -1;
-  for (var i = t.rows.length - 1; i >= 0; i--) {
+  // Newest rows are at the top of the scan window.
+  for (var i = 0; i < t.rows.length; i++) {
     var sameSession = String(t.rows[i][t.col.sessionId - 1]) === String(sessionId);
     var samePart = !t.col.part || String(t.rows[i][t.col.part - 1]) === String(part || '');
     if (sameSession && samePart) return i;
