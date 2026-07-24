@@ -945,7 +945,7 @@ function updateSessionRow_(row) {
   var t = locateSessionTable_();
   if (!t) throw new Error('No sheet with Name, Session ID, Part, Quantity, and Locked? headers found.');
 
-  var rowIdx = findRowBySessionPart_(t, row.sessionId, row.part);
+  var rowIdx = findRowBySessionPart_(t, row.sessionId, row.part, row.actionLabel);
   if (rowIdx === -1) {
     return appendSessionRow_(row);
   }
@@ -975,13 +975,21 @@ function updateSessionRow_(row) {
   return 1;
 }
 
-function findRowBySessionPart_(t, sessionId, part) {
+function findRowBySessionPart_(t, sessionId, part, incomingAction) {
   if (!t.col.sessionId || !sessionId) return -1;
+  var incoming = String(incomingAction || '').trim();
   // Newest rows are at the top of the scan window.
   for (var i = 0; i < t.rows.length; i++) {
     var sameSession = String(t.rows[i][t.col.sessionId - 1]) === String(sessionId);
     var samePart = !t.col.part || String(t.rows[i][t.col.part - 1]) === String(part || '');
-    if (sameSession && samePart) return i;
+    if (!sameSession || !samePart) continue;
+
+    var prev = t.col.action ? String(t.rows[i][t.col.action - 1] || '').trim() : '';
+    // Lock folds into the open row. Extra takes only merge into a bare Unlock.
+    if (incoming === 'Lock' || incoming.indexOf('+ Lock') !== -1 || /Lock$/.test(incoming)) {
+      return i;
+    }
+    if (prev === 'Unlock' || prev === '') return i;
   }
   return -1;
 }

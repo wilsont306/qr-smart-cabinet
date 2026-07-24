@@ -554,6 +554,7 @@ export async function apiUpdateSession(row: SessionWriteRow): Promise<boolean> {
   const values = body.values ?? [];
   if (values.length < 2) return apiAppendSession(row);
 
+  const incoming = (row.actionLabel || "").trim();
   const data = values.slice(1);
   let found = -1;
   for (let i = 0; i < data.length; i++) {
@@ -563,7 +564,17 @@ export async function apiUpdateSession(row: SessionWriteRow): Promise<boolean> {
       String(r[cols.sessionId] ?? "") === String(row.sessionId);
     const samePart =
       cols.part == null || String(r[cols.part] ?? "") === String(row.part || "");
-    if (sameSession && samePart) {
+    if (!sameSession || !samePart) continue;
+
+    const prev =
+      cols.action != null ? String(r[cols.action] ?? "").trim() : "";
+    // Lock folds into the open unlock/take row. Extra takes/returns always
+    // get a new line — only a bare Unlock row absorbs the first take/return.
+    if (incoming === "Lock" || incoming.includes("+ Lock") || incoming.endsWith("Lock")) {
+      found = i;
+      break;
+    }
+    if (prev === "Unlock" || prev === "") {
       found = i;
       break;
     }

@@ -212,8 +212,8 @@ export async function POST(
 
   // Mirror to the sheet before responding so Vercel can't freeze the isolate
   // mid-write. Sheets API is typically 200–800ms; Apps Script may be slower.
-  // If the drawer is already open, UPDATE the Unlock row → "Unlock + Take/Return"
-  // instead of appending a second tracker line.
+  // First take while unlocked updates the Unlock row → "Unlock + Take".
+  // Later takes of the same part append a new tracker line (quantity is not overwritten).
   const qtyAfter = stock.quantity;
   const sessionAction: "append" | "update" = drawerOpen ? "update" : "append";
   if (sheetsEnabled()) {
