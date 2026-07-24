@@ -13,7 +13,9 @@ import { currentSession } from "@/lib/session";
 import { drawerView } from "@/lib/dto";
 import {
   noteLocalStock,
+  pingSheets,
   setSheetTransaction,
+  sheetsEnabled,
 } from "@/lib/sheets";
 import type { Intent, Transaction } from "@/lib/types";
 
@@ -95,6 +97,8 @@ export async function POST(
 
   // Don't stall take/return on a cold script — mutate local SoT, mirror in after().
   // Never pull inventory mid-mutation: that races quantity/lock writes.
+  // Wake Apps Script during this request so the after() write hits a warm script.
+  if (sheetsEnabled()) void pingSheets();
 
   const stock = db.stock.get(drawer.id)!;
 

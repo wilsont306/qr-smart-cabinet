@@ -179,14 +179,15 @@ async function postResult(
   payload: Record<string, unknown>,
   opts?: { timeoutMs?: number; retries?: number },
 ): Promise<{ ok: boolean; error?: string }> {
-  // Keep writes snappy — long waits made the sheet feel "stuck" after takes.
+  // Cold Apps Script often needs ~10–15s; 12s timeouts were aborting writes
+  // before they landed, so the sheet looked "stuck" for a long time.
   const retries = opts?.retries ?? 1;
-  const timeoutMs = opts?.timeoutMs ?? 12000;
+  const timeoutMs = opts?.timeoutMs ?? 25000;
   let lastError = "fetch_failed";
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
-      await new Promise((r) => setTimeout(r, 250 * attempt));
+      await new Promise((r) => setTimeout(r, 500 * attempt));
     }
     const res = await postToSheets(payload, { timeoutMs });
     if (!res) {
@@ -198,7 +199,6 @@ async function postResult(
       const body = parseSheetsJson(text) as { error?: string; ok?: boolean };
       if (body?.error && body.error !== "snapshot_disabled") {
         lastError = body.error;
-        // Lock contention / brief Apps Script blip — worth retrying.
         if (/sheet_busy|timed out|timeout|service timed out/i.test(body.error)) {
           continue;
         }

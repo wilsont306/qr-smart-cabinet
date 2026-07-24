@@ -6,8 +6,10 @@ import { currentSession } from "@/lib/session";
 import { drawerView } from "@/lib/dto";
 import {
   noteLocalLock,
+  pingSheets,
   setSheetLockEvent,
   setSheetLocked,
+  sheetsEnabled,
 } from "@/lib/sheets";
 
 // POST /api/drawers/{id}/lock — physical lock (no stock mutation).
@@ -31,6 +33,8 @@ export async function POST(
   if (!drawer || !canAccessDrawer(user.id, drawer.id)) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
+
+  if (sheetsEnabled()) void pingSheets();
 
   const stock = db.stock.get(drawer.id)!;
   const item = db.items.get(drawer.itemId);

@@ -14,8 +14,10 @@ import { drawerView } from "@/lib/dto";
 import { deviceOpen, issueUnlockCommand } from "@/lib/lock";
 import {
   noteLocalLock,
+  pingSheets,
   setSheetLockEvent,
   setSheetLocked,
+  sheetsEnabled,
 } from "@/lib/sheets";
 
 interface Body {
@@ -77,6 +79,7 @@ export async function POST(
 
   // Don't block unlock on Sheets — stock/authz use in-memory SoT.
   // Never pull inventory here: a stale pull racing a take/lock overwrites qty.
+  if (sheetsEnabled()) void pingSheets();
 
   if (db.openDrawer.has(drawer.id)) {
     const stock = db.stock.get(drawer.id)!;

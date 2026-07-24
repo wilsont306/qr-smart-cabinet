@@ -62,81 +62,57 @@ function doPost(e) {
       return json_(probePhotos_(body.number));
     }
 
-    // Mutations share a document lock so rapid unlock/take/lock can't race cells.
+    // Mutations — no document lock / cell coloring on the hot path.
+    // Formatting was adding multi-second delay per take; use Sheet conditional
+    // formatting for Action/Locked colors if you want the chips back.
     if (body.type === 'set_quantity') {
-      return json_(withDocLock_(function () {
-        return {
-          ok: true,
-          updated: setQuantity_(body.number, body.quantity),
-        };
-      }));
+      return json_({
+        ok: true,
+        updated: setQuantity_(body.number, body.quantity),
+      });
     }
     if (body.type === 'set_locked') {
-      return json_(withDocLock_(function () {
-        return {
-          ok: true,
-          updated: setLocked_(body.number, body.locked),
-        };
-      }));
+      return json_({
+        ok: true,
+        updated: setLocked_(body.number, body.locked),
+      });
     }
     if (body.type === 'session_row') {
-      return json_(withDocLock_(function () {
-        var row = body.row || {};
-        if (body.action === 'update') {
-          return { ok: true, updated: updateSessionRow_(row) };
-        }
-        return { ok: true, appended: appendSessionRow_(row) };
-      }));
+      var row = body.row || {};
+      if (body.action === 'update') {
+        return json_({ ok: true, updated: updateSessionRow_(row) });
+      }
+      return json_({ ok: true, appended: appendSessionRow_(row) });
     }
     // Combined take/return: patch Quantity + write the session row in one call.
     if (body.type === 'tx') {
-      return json_(withDocLock_(function () {
-        var out = { ok: true };
-        if (body.number != null && body.quantity != null) {
-          out.qtyUpdated = setQuantity_(body.number, body.quantity);
-        }
-        if (body.row) {
-          out.sessionUpdated = body.action === 'update'
-            ? updateSessionRow_(body.row)
-            : appendSessionRow_(body.row);
-        }
-        return out;
-      }));
+      var out = { ok: true };
+      if (body.number != null && body.quantity != null) {
+        out.qtyUpdated = setQuantity_(body.number, body.quantity);
+      }
+      if (body.row) {
+        out.sessionUpdated = body.action === 'update'
+          ? updateSessionRow_(body.row)
+          : appendSessionRow_(body.row);
+      }
+      return json_(out);
     }
     // Combined lock/unlock: patch Is Locked + write the session row in one call.
     if (body.type === 'lock_tx') {
-      return json_(withDocLock_(function () {
-        var lockOut = { ok: true };
-        if (body.number != null && body.locked != null) {
-          lockOut.lockUpdated = setLocked_(body.number, body.locked);
-        }
-        if (body.row) {
-          lockOut.sessionUpdated = body.action === 'update'
-            ? updateSessionRow_(body.row)
-            : appendSessionRow_(body.row);
-        }
-        return lockOut;
-      }));
+      var lockOut = { ok: true };
+      if (body.number != null && body.locked != null) {
+        lockOut.lockUpdated = setLocked_(body.number, body.locked);
+      }
+      if (body.row) {
+        lockOut.sessionUpdated = body.action === 'update'
+          ? updateSessionRow_(body.row)
+          : appendSessionRow_(body.row);
+      }
+      return json_(lockOut);
     }
     return json_({ error: 'unknown_type' });
   } catch (err) {
     return json_({ error: String(err) });
-  }
-}
-
-/** Serialize spreadsheet mutations across concurrent Web App executions. */
-function withDocLock_(fn) {
-  var lock = LockService.getDocumentLock();
-  // Short wait — long locks made rapid takes feel stuck on the sheet.
-  if (!lock.tryLock(8000)) {
-    throw new Error('sheet_busy');
-  }
-  try {
-    var result = fn();
-    SpreadsheetApp.flush();
-    return result;
-  } finally {
-    lock.releaseLock();
   }
 }
 
@@ -774,7 +750,6 @@ function setLocked_(number, locked) {
   var sheetRow = t.headerRow + 1 + rowIdx;
   var value = !!locked;
   t.sheet.getRange(sheetRow, t.col.locked).setValue(value);
-  colorLockedCell_(t.sheet, sheetRow, t.col.locked, value);
   return 1;
 }
 
@@ -939,7 +914,6 @@ function appendSessionRow_(row) {
   if (t.col.team) arr[t.col.team - 1] = row.teamNumber || '';
   if (t.col.level) arr[t.col.level - 1] = row.roboticsLevel || '';
   t.sheet.getRange(sheetRow, 1, 1, t.width).setValues([arr]);
-  colorSessionRow_(t, sheetRow, actionLabel, !!row.locked);
   return 1;
 }
 
@@ -998,7 +972,6 @@ function updateSessionRow_(row) {
   if (t.col.team && row.teamNumber) arr[t.col.team - 1] = row.teamNumber;
   if (t.col.level && row.roboticsLevel) arr[t.col.level - 1] = row.roboticsLevel;
   t.sheet.getRange(sheetRow, 1, 1, t.width).setValues([arr]);
-  colorSessionRow_(t, sheetRow, actionLabel, !!row.locked);
   return 1;
 }
 
