@@ -244,9 +244,48 @@ function mapInventoryCols(headers: unknown[]): ColMap {
       col.quantity = i;
     } else if (key === "is locked" || key === "locked" || key === "locked?") {
       col.locked = i;
+    } else if (
+      key === "photo url" ||
+      key === "image url" ||
+      key === "img url" ||
+      key === "picture url"
+    ) {
+      col.imageUrl = i;
+    } else if (
+      key === "image" ||
+      key === "images" ||
+      key === "photo" ||
+      key === "photos" ||
+      key === "img" ||
+      key === "picture"
+    ) {
+      col.image = i;
     }
   });
   return col;
+}
+
+/** Turn =IMAGE("url") / Drive links / https into a browser-friendly photo URL. */
+function parsePhotoCell(raw: unknown): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  if (/^data:image\//i.test(s)) return s;
+
+  const formula = s.match(/^=\s*IMAGE\s*\(\s*["']([^"']+)["']/i);
+  const candidate = (formula?.[1] || s).trim();
+  if (!candidate) return "";
+
+  const id =
+    candidate.match(/[?&]id=([a-zA-Z0-9_-]{20,})/)?.[1] ||
+    candidate.match(/\/file\/d\/([a-zA-Z0-9_-]{20,})/)?.[1] ||
+    candidate.match(/\/d\/([a-zA-Z0-9_-]{20,})(?:\/|$)/)?.[1] ||
+    (/^[a-zA-Z0-9_-]{25,}$/.test(candidate) ? candidate : undefined);
+
+  if (id && (/drive\.google\.com|googleusercontent\.com/i.test(candidate) || !/^https?:/i.test(candidate))) {
+    return `https://drive.google.com/thumbnail?id=${id}&sz=w1600`;
+  }
+  if (/^https?:\/\//i.test(candidate)) return candidate;
+  return "";
 }
 
 function mapSessionCols(headers: unknown[]): ColMap {
@@ -814,7 +853,7 @@ export async function apiPing(): Promise<boolean> {
   return res.ok;
 }
 
-/** Light inventory pull (no photos) via Sheets API. */
+/** Inventory pull via Sheets API (qty/lock + Image/=IMAGE URLs when present). */
 export async function apiPullInventory(): Promise<
   | {
       ok: true;
@@ -823,27 +862,40 @@ export async function apiPullInventory(): Promise<
         part: string;
         quantity: number;
         locked: boolean;
+        photo?: string;
       }[];
+      photos: number;
+      imageCol: number | null;
     }
   | { ok: false; error: string }
 > {
   try {
     const layout = await loadLayout(true);
+    const cols = layout.inventoryCols;
+    const hasImageCol = cols.image != null || cols.imageUrl != null;
+
+    // FORMULA render so =IMAGE("https://...") comes through as text.
     const res = await sheetsFetch(
       `/values/${encodeURIComponent(quoteTitle(layout.inventoryTitle))}`,
-      { query: { majorDimension: "ROWS" } },
+      {
+        query: {
+          majorDimension: "ROWS",
+          ...(hasImageCol ? { valueRenderOption: "FORMULA" } : {}),
+        },
+      },
     );
     if (!res.ok) return { ok: false, error: `pull_http_${res.status}` };
     const body = (await res.json()) as { values?: unknown[][] };
     const values = body.values ?? [];
-    const cols = layout.inventoryCols;
     const drawers: {
       number: number;
       part: string;
       quantity: number;
       locked: boolean;
+      photo?: string;
     }[] = [];
     const drawerRows = new Map<number, number>();
+    let photos = 0;
 
     for (let i = 1; i < values.length; i++) {
       const r = values[i];
@@ -874,7 +926,23 @@ export async function apiPullInventory(): Promise<
           );
         }
       }
-      drawers.push({ number, part, quantity, locked });
+
+      let photo = "";
+      if (cols.imageUrl != null) {
+        photo = parsePhotoCell(r[cols.imageUrl]);
+      }
+      if (!photo && cols.image != null) {
+        photo = parsePhotoCell(r[cols.image]);
+      }
+      if (photo) photos++;
+
+      drawers.push({
+        number,
+        part,
+        quantity,
+        locked,
+        ...(photo ? { photo } : {}),
+      });
       drawerRows.set(number, i + 1);
     }
 
@@ -882,7 +950,17 @@ export async function apiPullInventory(): Promise<
     layout.loadedAt = Date.now();
     cachedLayout = layout;
 
-    return { ok: true, drawers };
+    return {
+      ok: true,
+      drawers,
+      photos,
+      imageCol:
+        cols.image != null
+          ? cols.image + 1
+          : cols.imageUrl != null
+            ? cols.imageUrl + 1
+            : null,
+    };
   } catch (err) {
     return { ok: false, error: String(err) };
   }

@@ -330,17 +330,30 @@ async function pullOnce(opts?: {
   photos?: number;
   imageCol?: number | null;
 }> {
-  // Fast path: Sheets API for light inventory (no Image column).
-  if (sheetsApiEnabled() && !opts?.includePhotos) {
+  // Sheets API reads qty/lock and =IMAGE("url") / Photo URL cells.
+  // Apps Script is only needed to convert raw Insert→Image CellImages.
+  if (sheetsApiEnabled()) {
     const api = await apiPullInventory();
     if (api.ok) {
       applySheetRowsToStore(api.drawers);
       lastPullAt = Date.now();
       lastPullOk = true;
-      audit({ type: "sheets.pull_ok", detail: `${api.drawers.length} drawers api` });
-      return { ok: true, count: api.drawers.length, photos: 0, imageCol: null };
-    }
-    if (!WEBHOOK_URL || !SECRET) {
+      audit({
+        type: "sheets.pull_ok",
+        detail: `${api.drawers.length} drawers photos_${api.photos} imageCol_${api.imageCol ?? "none"} api`,
+      });
+
+      // Have photo URLs already, or this isn't a photo Refresh — done.
+      if (!opts?.includePhotos || api.photos > 0 || !WEBHOOK_URL || !SECRET) {
+        return {
+          ok: true,
+          count: api.drawers.length,
+          photos: api.photos,
+          imageCol: api.imageCol,
+        };
+      }
+      // includePhotos + 0 formula URLs: try Apps Script for CellImage conversion.
+    } else if (!WEBHOOK_URL || !SECRET) {
       lastPullOk = false;
       return { ok: false, error: api.error };
     }
@@ -356,6 +369,10 @@ async function pullOnce(opts?: {
   );
   if (!res) {
     audit({ type: "sheets.pull_error", detail: "fetch_failed" });
+    // Keep API inventory if we already applied it above.
+    if (sheetsApiEnabled() && lastPullOk) {
+      return { ok: true, count: db.drawers.size, photos: 0, imageCol: null };
+    }
     lastPullOk = false;
     return { ok: false, error: "fetch_failed" };
   }
@@ -365,6 +382,9 @@ async function pullOnce(opts?: {
     text = await res.text();
   } catch {
     audit({ type: "sheets.pull_error", detail: "read_body_failed" });
+    if (sheetsApiEnabled() && lastPullOk) {
+      return { ok: true, count: db.drawers.size, photos: 0, imageCol: null };
+    }
     lastPullOk = false;
     return { ok: false, error: "read_body_failed" };
   }
@@ -376,6 +396,16 @@ async function pullOnce(opts?: {
     /^\s*<!DOCTYPE html/i.test(text)
   ) {
     audit({ type: "sheets.pull_error", detail: "webhook_gone" });
+    // Inventory from Sheets API still counts as success.
+    if (sheetsApiEnabled() && lastPullOk) {
+      return {
+        ok: true,
+        count: db.drawers.size,
+        photos: 0,
+        imageCol: null,
+        error: "webhook_gone",
+      };
+    }
     lastPullOk = false;
     return { ok: false, error: "webhook_gone" };
   }
@@ -400,18 +430,27 @@ async function pullOnce(opts?: {
       type: "sheets.pull_error",
       detail: `invalid_json http_${res.status} ${text.slice(0, 120)}`,
     });
+    if (sheetsApiEnabled() && lastPullOk) {
+      return { ok: true, count: db.drawers.size, photos: 0, imageCol: null };
+    }
     lastPullOk = false;
     return { ok: false, error: "invalid_json" };
   }
 
   if (body.error) {
     audit({ type: "sheets.pull_error", detail: String(body.error) });
+    if (sheetsApiEnabled() && lastPullOk) {
+      return { ok: true, count: db.drawers.size, photos: 0, imageCol: null };
+    }
     lastPullOk = false;
     return { ok: false, error: String(body.error) };
   }
 
   if (!res.ok) {
     audit({ type: "sheets.pull_error", detail: `http ${res.status}` });
+    if (sheetsApiEnabled() && lastPullOk) {
+      return { ok: true, count: db.drawers.size, photos: 0, imageCol: null };
+    }
     lastPullOk = false;
     return { ok: false, error: `http_${res.status}` };
   }
