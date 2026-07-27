@@ -278,10 +278,10 @@ body.smart-root {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   width: 200px;
   margin: 0 auto;
-  padding: 2px;
+  padding: 1px 1px 0;
   transform: translateX(30px) rotateX(-5deg) rotateY(30deg);
   transform-style: preserve-3d;
 }
@@ -290,9 +290,9 @@ body.smart-root {
   position: absolute;
   inset: 0;
   border: 1px solid #d6cbaf;
-  border-radius: 7px;
+  border-radius: 6px 6px 0 0;
   background-image: repeating-linear-gradient(90deg, rgba(120, 95, 45, 0.035) 0 2px, transparent 2px 13px), linear-gradient(105deg, #efe8d6, #e4dac0);
-  box-shadow: inset 0 0 0 1px rgba(255, 253, 248, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(255, 253, 248, 0.35);
 }
 
 .smart-side-panel {
@@ -301,9 +301,9 @@ body.smart-root {
   bottom: 0;
   left: 0;
   width: 96px;
-  border-radius: 7px 0 0 7px;
-  background-image: linear-gradient(90deg, #d8cbad 0%, #c6b78f 55%, #b7a67c 100%);
-  box-shadow: inset 3px 0 7px rgba(255, 252, 242, 0.28), inset -10px 0 16px rgba(60, 45, 20, 0.22);
+  border-radius: 0;
+  background-image: linear-gradient(90deg, #d2c4a4 0%, #c0b089 55%, #b09f74 100%);
+  box-shadow: inset 2px 0 6px rgba(255, 252, 242, 0.2), inset -8px 0 14px rgba(60, 45, 20, 0.2);
   transform: rotateY(90deg);
   transform-origin: left center;
 }
@@ -348,11 +348,18 @@ body.smart-root {
 
 .smart-cavity {
   position: absolute;
-  inset: 1px 2px;
-  border-radius: 6px;
+  inset: 0 1px;
+  border-radius: 4px;
   background: #2e2718;
   box-shadow: inset -10px 0 14px rgba(0, 0, 0, 0.5), inset 0 6px 10px rgba(0, 0, 0, 0.4);
   transform: translateZ(0.6px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+
+.smart-cavity.is-open {
+  opacity: 1;
 }
 
 .smart-drawer-box {
@@ -405,13 +412,13 @@ body.smart-root {
 
 .smart-front {
   position: absolute;
-  inset: 0 1px;
+  inset: 0;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 3px;
   border: 1px solid;
-  border-radius: 6px;
+  border-radius: 4px;
   padding: 6px 12px 0;
   transition: box-shadow 300ms;
 }

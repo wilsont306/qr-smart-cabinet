@@ -696,7 +696,7 @@ function DrawerRow({
 
   return (
     <div className="smart-drawer-row">
-      <div className="smart-cavity" />
+      <div className={`smart-cavity${open ? " is-open" : ""}`} />
       <button
         className="smart-drawer-box"
         onClick={onOpen}
