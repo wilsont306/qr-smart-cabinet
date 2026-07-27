@@ -5,14 +5,22 @@
  *   npm run qr:generate
  *   APP_URL=https://your-host.example.com npm run qr:generate
  *
- * Output: public/qrcodes/drawer-1.png … drawer-9.png + print sheet.
+ * Branded (NYC FIRST logo in center — same URLs, separate output folder):
+ *   npm run qr:generate:branded
+ *   LOGO_PATH=public/brand/official-logo.png npm run qr:generate:branded
+ *
+ * Output:
+ *   public/qrcodes/drawer-1.png … drawer-9.png (+ index.html)
+ *   public/qrcodes/branded/… when branded
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import QRCode from "qrcode";
+import sharp from "sharp";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const rootDir = path.join(__dirname, "..");
 
 const DRAWERS = [
   { n: 1, shortCode: "A1-7Q4", label: "Drawer 1", item: "Cat6 Patch Cable 1m" },
@@ -26,35 +34,199 @@ const DRAWERS = [
   { n: 9, shortCode: "A9-4Z8", label: "Drawer 9", item: "RJ45 Connectors" },
 ];
 
+const branded =
+  process.env.BRANDED === "1" || process.argv.includes("--branded");
 const base = (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
-const outDir = path.join(__dirname, "..", "public", "qrcodes");
+const outDir = branded
+  ? path.join(rootDir, "public", "qrcodes", "branded")
+  : path.join(rootDir, "public", "qrcodes");
+const logoPath = process.env.LOGO_PATH
+  ? path.resolve(rootDir, process.env.LOGO_PATH)
+  : path.join(rootDir, "public", "brand", "nyc-first-logo.png");
+const qrSize = Number(process.env.QR_SIZE || 512);
 
-async function main() {
-  fs.mkdirSync(outDir, { recursive: true });
+async function writePlainQr(filePath, url) {
+  await QRCode.toFile(filePath, url, {
+    type: "png",
+    width: qrSize,
+    margin: 2,
+    errorCorrectionLevel: "M",
+    color: { dark: "#1C2B4A", light: "#FFFFFF" },
+  });
+}
 
-  const cards = [];
-  for (const d of DRAWERS) {
-    const url = `${base}/d/${encodeURIComponent(d.shortCode)}`;
-    const file = `drawer-${d.n}.png`;
-    const filePath = path.join(outDir, file);
+/**
+ * Same URL encoding as plain QRs; logo is visual only.
+ * High error correction (H) keeps scans reliable with a small center cover.
+ */
 
-    await QRCode.toFile(filePath, url, {
-      type: "png",
-      width: 512,
-      margin: 2,
-      errorCorrectionLevel: "M",
-      color: { dark: "#1C2B4A", light: "#FFFFFF" },
-    });
+/**
+ * Knock out the black field, keep the mark, add a soft white halo so QR
+ * modules don't eat the edges — no rectangle / circle plate.
+ */
+async function prepareLogoMark(logoPath, maxSize) {
+  const halo = Math.max(3, Math.round(maxSize * 0.045));
 
-    console.log(`✓ ${d.label} → ${url}`);
-    cards.push({ ...d, url, file });
+  const { data, info } = await sharp(logoPath)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const w = info.width;
+  const h = info.height;
+  const src = data;
+  const mask = new Uint8Array(w * h);
+
+  for (let i = 0, p = 0; i < src.length; i += info.channels, p++) {
+    const r = src[i];
+    const g = src[i + 1];
+    const b = src[i + 2];
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    mask[p] = lum > 22 ? 1 : 0;
   }
 
-  const html = `<!DOCTYPE html>
+  const dilated = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!mask[y * w + x]) continue;
+      for (let dy = -halo; dy <= halo; dy++) {
+        for (let dx = -halo; dx <= halo; dx++) {
+          if (dx * dx + dy * dy > halo * halo) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          dilated[ny * w + nx] = 1;
+        }
+      }
+    }
+  }
+
+  const out = Buffer.alloc(w * h * 4);
+  let minX = w;
+  let maxX = -1;
+  let minY = h;
+  let maxY = -1;
+  let sx = 0;
+  let sy = 0;
+  let sw = 0;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const p = y * w + x;
+      const o = p * 4;
+      if (!dilated[p]) {
+        out[o + 3] = 0;
+        continue;
+      }
+
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+
+      if (mask[p]) {
+        const i = p * info.channels;
+        let r = src[i];
+        let g = src[i + 1];
+        let b = src[i + 2];
+        const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        const sat = Math.max(r, g, b) - Math.min(r, g, b);
+        if (lum < 90 && sat < 35) {
+          r = 20;
+          g = 20;
+          b = 20;
+        }
+        out[o] = r;
+        out[o + 1] = g;
+        out[o + 2] = b;
+        out[o + 3] = 255;
+        const weight = Math.max(1, lum);
+        sx += x * weight;
+        sy += y * weight;
+        sw += weight;
+      } else {
+        out[o] = 255;
+        out[o + 1] = 255;
+        out[o + 2] = 255;
+        out[o + 3] = 255;
+      }
+    }
+  }
+
+  if (maxX < 0) {
+    throw new Error("Logo has no visible ink to place on the QR.");
+  }
+
+  const cropped = await sharp(out, {
+    raw: { width: w, height: h, channels: 4 },
+  })
+    .extract({
+      left: minX,
+      top: minY,
+      width: maxX - minX + 1,
+      height: maxY - minY + 1,
+    })
+    .png()
+    .toBuffer();
+
+  const meta = await sharp(cropped).metadata();
+  const tw = meta.width || maxSize;
+  const th = meta.height || maxSize;
+  const scale = Math.min(maxSize / tw, maxSize / th);
+  const markW = Math.max(1, Math.round(tw * scale));
+  const markH = Math.max(1, Math.round(th * scale));
+
+  const resized = await sharp(cropped)
+    .resize(markW, markH, { fit: "fill" })
+    .png()
+    .toBuffer();
+
+  const cropCx = sw ? sx / sw - minX : tw / 2;
+  const cropCy = sw ? sy / sw - minY : th / 2;
+
+  return {
+    buffer: resized,
+    optical: {
+      cx: cropCx * scale,
+      cy: cropCy * scale,
+      width: markW,
+      height: markH,
+    },
+  };
+}
+
+async function writeBrandedQr(filePath, url, logo) {
+  const qrBuffer = await QRCode.toBuffer(url, {
+    type: "png",
+    width: qrSize,
+    margin: 2,
+    errorCorrectionLevel: "H",
+    color: { dark: "#1C2B4A", light: "#FFFFFF" },
+  });
+
+  const qrMeta = await sharp(qrBuffer).metadata();
+  const width = qrMeta.width || qrSize;
+  const height = qrMeta.height || qrSize;
+
+  const maxMark = Math.round(Math.min(width, height) * 0.24);
+  const { buffer: overlay, optical } = await prepareLogoMark(logo, maxMark);
+
+  // Place so the artwork's optical center lands on the QR center.
+  const left = Math.round(width / 2 - optical.cx);
+  const top = Math.round(height / 2 - optical.cy);
+
+  await sharp(qrBuffer)
+    .composite([{ input: overlay, left, top }])
+    .png()
+    .toFile(filePath);
+}
+
+function buildPrintSheet(cards, titleSuffix) {
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Smart Cabinet — Drawer QR Codes</title>
+  <title>Smart Cabinet — Drawer QR Codes${titleSuffix}</title>
   <style>
     @page { size: letter; margin: 0.5in; }
     * { box-sizing: border-box; }
@@ -139,7 +311,7 @@ async function main() {
 <body>
   <header>
     <div class="eyebrow">NYC FIRST</div>
-    <h1>Smart Cabinet QR Codes</h1>
+    <h1>Smart Cabinet QR Codes${titleSuffix}</h1>
     <p>Base URL: <strong>${base}</strong> — print and affix one sticker per drawer. Scan opens that drawer.</p>
   </header>
   <div class="grid">
@@ -159,15 +331,60 @@ async function main() {
 </body>
 </html>
 `;
+}
 
-  fs.writeFileSync(path.join(outDir, "index.html"), html, "utf8");
+async function main() {
+  fs.mkdirSync(outDir, { recursive: true });
+
+  if (branded && !fs.existsSync(logoPath)) {
+    throw new Error(
+      `Logo not found at ${logoPath}. Add a square PNG/SVG or set LOGO_PATH.`,
+    );
+  }
+
+  const cards = [];
+  for (const d of DRAWERS) {
+    const url = `${base}/d/${encodeURIComponent(d.shortCode)}`;
+    const file = `drawer-${d.n}.png`;
+    const filePath = path.join(outDir, file);
+
+    if (branded) {
+      await writeBrandedQr(filePath, url, logoPath);
+    } else {
+      await writePlainQr(filePath, url);
+    }
+
+    console.log(`✓ ${d.label} → ${url}${branded ? " (branded)" : ""}`);
+    cards.push({ ...d, url, file });
+  }
+
+  const relOut = path.relative(path.join(rootDir, "public"), outDir);
+  fs.writeFileSync(
+    path.join(outDir, "index.html"),
+    buildPrintSheet(cards, branded ? " (Branded)" : ""),
+    "utf8",
+  );
   fs.writeFileSync(
     path.join(outDir, "manifest.json"),
-    JSON.stringify({ base, generatedAt: new Date().toISOString(), drawers: cards }, null, 2),
+    JSON.stringify(
+      {
+        base,
+        branded,
+        logo: branded ? path.relative(rootDir, logoPath) : null,
+        generatedAt: new Date().toISOString(),
+        drawers: cards,
+      },
+      null,
+      2,
+    ),
   );
 
-  console.log(`\nWrote ${cards.length} QR codes → public/qrcodes/`);
-  console.log(`Print sheet → ${base}/qrcodes/index.html`);
+  console.log(`\nWrote ${cards.length} QR codes → public/${relOut}/`);
+  console.log(`Print sheet → ${base}/${relOut}/index.html`);
+  if (branded) {
+    console.log(`Logo: ${path.relative(rootDir, logoPath)}`);
+    console.log("Tip: test-scan one sticker before printing the full sheet.");
+  }
 }
 
 main().catch((err) => {

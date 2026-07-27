@@ -278,10 +278,10 @@ body.smart-root {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   width: 200px;
   margin: 0 auto;
-  padding: 3px;
+  padding: 2px;
   transform: translateX(30px) rotateX(-5deg) rotateY(30deg);
   transform-style: preserve-3d;
 }
@@ -306,24 +306,6 @@ body.smart-root {
   box-shadow: inset 3px 0 7px rgba(255, 252, 242, 0.28), inset -10px 0 16px rgba(60, 45, 20, 0.22);
   transform: rotateY(90deg);
   transform-origin: left center;
-}
-
-.smart-side-panel span {
-  position: absolute;
-  left: 16px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #f4efe0, #a5966f);
-  box-shadow: inset 0 0 0 1px rgba(85, 65, 30, 0.3), 0 1px 1px rgba(60, 45, 20, 0.35);
-}
-
-.smart-side-panel span:first-child {
-  top: 16px;
-}
-
-.smart-side-panel span:last-child {
-  bottom: 16px;
 }
 
 .smart-top-panel {
@@ -366,7 +348,7 @@ body.smart-root {
 
 .smart-cavity {
   position: absolute;
-  inset: 2px 3px;
+  inset: 1px 2px;
   border-radius: 6px;
   background: #2e2718;
   box-shadow: inset -10px 0 14px rgba(0, 0, 0, 0.5), inset 0 6px 10px rgba(0, 0, 0, 0.4);
@@ -423,7 +405,7 @@ body.smart-root {
 
 .smart-front {
   position: absolute;
-  inset: 2px 3px;
+  inset: 0 1px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -878,6 +860,7 @@ body.smart-root {
   width: 20px;
   height: 6px;
   border-radius: 2px;
+  background: #d8cfba;
 }
 
 .smart-drawer-icon span:last-child {

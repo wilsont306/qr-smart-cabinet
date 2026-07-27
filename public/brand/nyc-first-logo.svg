@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="NYC FIRST">
+  <rect width="200" height="200" rx="28" fill="#CF2233"/>
+  <text
+    x="100"
+    y="92"
+    text-anchor="middle"
+    fill="#FFFFFF"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="28"
+    font-weight="800"
+    letter-spacing="1"
+  >NYC</text>
+  <text
+    x="100"
+    y="128"
+    text-anchor="middle"
+    fill="#FFFFFF"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="28"
+    font-weight="800"
+    letter-spacing="1"
+  >FIRST</text>
+</svg>

@@ -631,10 +631,7 @@ function CabinetStage({
         <div className="smart-perspective">
           <div className="smart-cabinet">
             <div className="smart-carcass" />
-            <div className="smart-side-panel">
-              <span />
-              <span />
-            </div>
+            <div className="smart-side-panel" />
             <div className="smart-top-panel">
               <span />
               <i />
