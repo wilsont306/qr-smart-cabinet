@@ -60,22 +60,23 @@ export function BottomTabs({
         onClick={() => router.push("/drawers")}
         aria-current={active === "drawers" ? "page" : undefined}
       >
-        <div className="smart-drawer-icon">
+        <div className="smart-drawer-icon" aria-hidden>
           <span style={{ background: active === "drawers" ? accent : undefined }} />
           <span style={{ background: active === "drawers" ? accent : undefined }} />
         </div>
         <b style={active === "drawers" ? { color: accent } : undefined}>Drawers</b>
       </button>
-      {centerAction && (
-        <div className="smart-bottom-center">{centerAction}</div>
-      )}
+      {/* Always reserve the center slot so tab layout doesn't jump. */}
+      <div className="smart-bottom-center" aria-hidden={!centerAction}>
+        {centerAction}
+      </div>
       <button
         type="button"
         className={active === "activity" ? undefined : "inactive"}
         onClick={() => router.push("/activity")}
         aria-current={active === "activity" ? "page" : undefined}
       >
-        <div className="smart-activity-icon">
+        <div className="smart-activity-icon" aria-hidden>
           <span style={active === "activity" ? { background: accent } : undefined} />
           <span style={active === "activity" ? { background: accent } : undefined} />
           <span style={active === "activity" ? { background: accent } : undefined} />
