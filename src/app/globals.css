@@ -670,13 +670,18 @@ body.smart-root {
 
 .smart-legal-back {
   flex-shrink: 0;
-  border: 1px solid var(--smart-panel-border);
+  border: 1px solid rgba(242, 236, 221, 0.22);
   border-radius: 999px;
-  background: var(--smart-panel-bg);
+  background: #2a2621;
   padding: 8px 14px;
-  color: var(--smart-ink);
+  color: #f2ecdd;
   font-size: 13px;
   font-weight: 600;
+  text-decoration: none;
+}
+
+.smart-legal-back:hover {
+  background: #35302a;
 }
 
 .smart-legal-doc {
