@@ -1,6 +1,8 @@
 {
   "base": "https://qr-smart-cabinet.vercel.app",
-  "generatedAt": "2026-07-15T15:14:37.280Z",
+  "branded": false,
+  "logo": null,
+  "generatedAt": "2026-07-28T02:53:47.826Z",
   "drawers": [
     {
       "n": 1,
@@ -73,6 +75,98 @@
       "item": "RJ45 Connectors",
       "url": "https://qr-smart-cabinet.vercel.app/d/A9-4Z8",
       "file": "drawer-9.png"
+    }
+  ],
+  "cabinet": {
+    "n": 10,
+    "shortCode": "CAB-00",
+    "label": "Cabinet",
+    "item": "Check in — no drawer",
+    "path": "/",
+    "file": "cabinet.png",
+    "url": "https://qr-smart-cabinet.vercel.app/"
+  },
+  "codes": [
+    {
+      "n": 1,
+      "shortCode": "A1-7Q4",
+      "label": "Drawer 1",
+      "item": "Cat6 Patch Cable 1m",
+      "url": "https://qr-smart-cabinet.vercel.app/d/A1-7Q4",
+      "file": "drawer-1.png"
+    },
+    {
+      "n": 2,
+      "shortCode": "A2-3K9",
+      "label": "Drawer 2",
+      "item": "Cat6 Patch Cable 3m",
+      "url": "https://qr-smart-cabinet.vercel.app/d/A2-3K9",
+      "file": "drawer-2.png"
+    },
+    {
+      "n": 3,
+      "shortCode": "A3-8M2",
+      "label": "Drawer 3",
+      "item": "HDMI Cable",
+      "url": "https://qr-smart-cabinet.vercel.app/d/A3-8M2",
+      "file": "drawer-3.png"
+    },
+    {
+      "n": 4,
+      "shortCode": "A4-0X5",
+      "label": "Drawer 4",
+      "item": "USB-C Cable",
+      "url": "https://qr-smart-cabinet.vercel.app/d/A4-0X5",
+      "file": "drawer-4.png"
+    },
+    {
+      "n": 5,
+      "shortCode": "A5-2R1",
+      "label": "Drawer 5",
+      "item": "Power Cable",
+      "url": "https://qr-smart-cabinet.vercel.app/d/A5-2R1",
+      "file": "drawer-5.png"
+    },
+    {
+      "n": 6,
+      "shortCode": "A6-5T7",
+      "label": "Drawer 6",
+      "item": "Fiber Cable",
+      "url": "https://qr-smart-cabinet.vercel.app/d/A6-5T7",
+      "file": "drawer-6.png"
+    },
+    {
+      "n": 7,
+      "shortCode": "A7-9W3",
+      "label": "Drawer 7",
+      "item": "Cable Ties",
+      "url": "https://qr-smart-cabinet.vercel.app/d/A7-9W3",
+      "file": "drawer-7.png"
+    },
+    {
+      "n": 8,
+      "shortCode": "A8-1Y6",
+      "label": "Drawer 8",
+      "item": "Velcro Straps",
+      "url": "https://qr-smart-cabinet.vercel.app/d/A8-1Y6",
+      "file": "drawer-8.png"
+    },
+    {
+      "n": 9,
+      "shortCode": "A9-4Z8",
+      "label": "Drawer 9",
+      "item": "RJ45 Connectors",
+      "url": "https://qr-smart-cabinet.vercel.app/d/A9-4Z8",
+      "file": "drawer-9.png"
+    },
+    {
+      "n": 10,
+      "shortCode": "CAB-00",
+      "label": "Cabinet",
+      "item": "Check in — no drawer",
+      "path": "/",
+      "file": "cabinet.png",
+      "url": "https://qr-smart-cabinet.vercel.app/"
     }
   ]
 }

@@ -1,5 +1,5 @@
 /**
- * Generate printable QR codes for all 9 cabinet drawers.
+ * Generate printable QR codes for all 9 cabinet drawers + 1 cabinet entry.
  *
  * Usage:
  *   npm run qr:generate
@@ -10,7 +10,7 @@
  *   LOGO_PATH=public/brand/official-logo.png npm run qr:generate:branded
  *
  * Output:
- *   public/qrcodes/drawer-1.png … drawer-9.png (+ index.html)
+ *   public/qrcodes/drawer-1.png … drawer-9.png, cabinet.png (+ index.html)
  *   public/qrcodes/branded/… when branded
  */
 import fs from "node:fs";
@@ -33,6 +33,16 @@ const DRAWERS = [
   { n: 8, shortCode: "A8-1Y6", label: "Drawer 8", item: "Velcro Straps" },
   { n: 9, shortCode: "A9-4Z8", label: "Drawer 9", item: "RJ45 Connectors" },
 ];
+
+/** Opens the app (check-in / cabinet) — not a specific drawer. */
+const CABINET = {
+  n: 10,
+  shortCode: "CAB-00",
+  label: "Cabinet",
+  item: "Check in — no drawer",
+  path: "/",
+  file: "cabinet.png",
+};
 
 const branded =
   process.env.BRANDED === "1" || process.argv.includes("--branded");
@@ -221,7 +231,7 @@ async function writeBrandedQr(filePath, url, logo) {
     .toFile(filePath);
 }
 
-function buildPrintSheet(cards, titleSuffix) {
+function buildPrintSheet(cards, titleSuffix, assetBase) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -312,14 +322,14 @@ function buildPrintSheet(cards, titleSuffix) {
   <header>
     <div class="eyebrow">NYC FIRST</div>
     <h1>Smart Cabinet QR Codes${titleSuffix}</h1>
-    <p>Base URL: <strong>${base}</strong> — print and affix one sticker per drawer. Scan opens that drawer.</p>
+    <p>Base URL: <strong>${base}</strong> — print and affix drawer stickers; the Cabinet code opens check-in without selecting a drawer.</p>
   </header>
   <div class="grid">
     ${cards
       .map(
         (c) => `
     <article class="card">
-      <img src="${c.file}" alt="QR for ${c.label}" />
+      <img src="${assetBase}/${c.file}" alt="QR for ${c.label}" />
       <h2>${c.label}</h2>
       <p class="item">${c.item}</p>
       <div class="code">${c.shortCode}</div>
@@ -358,10 +368,26 @@ async function main() {
     cards.push({ ...d, url, file });
   }
 
+  {
+    const url = `${base}${CABINET.path}`;
+    const file = CABINET.file;
+    const filePath = path.join(outDir, file);
+    if (branded) {
+      await writeBrandedQr(filePath, url, logoPath);
+    } else {
+      await writePlainQr(filePath, url);
+    }
+    console.log(`✓ ${CABINET.label} → ${url}${branded ? " (branded)" : ""}`);
+    cards.push({ ...CABINET, url, file });
+  }
+
   const relOut = path.relative(path.join(rootDir, "public"), outDir);
+  // Root-absolute paths so images still resolve when Vercel serves
+  // /qrcodes/branded (no trailing slash) instead of /qrcodes/branded/.
+  const assetBase = `/${relOut.replace(/\\/g, "/")}`;
   fs.writeFileSync(
     path.join(outDir, "index.html"),
-    buildPrintSheet(cards, branded ? " (Branded)" : ""),
+    buildPrintSheet(cards, branded ? " (Branded)" : "", assetBase),
     "utf8",
   );
   fs.writeFileSync(
@@ -372,7 +398,9 @@ async function main() {
         branded,
         logo: branded ? path.relative(rootDir, logoPath) : null,
         generatedAt: new Date().toISOString(),
-        drawers: cards,
+        drawers: cards.filter((c) => c.n <= 9),
+        cabinet: cards.find((c) => c.n === 10) ?? null,
+        codes: cards,
       },
       null,
       2,
