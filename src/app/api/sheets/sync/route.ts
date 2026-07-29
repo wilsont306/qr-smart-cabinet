@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
+import { after } from "next/server";
 import { db, seed } from "@/lib/store";
 import { LIMITS, canAccessDrawer, clientIp, rateLimit } from "@/lib/security";
 import { currentUser } from "@/lib/session";
 import { drawerView } from "@/lib/dto";
-import { sheetsEnabled, syncSheet } from "@/lib/sheets";
+import { pullStockFromSheets, sheetsEnabled, syncSheet } from "@/lib/sheets";
 
 // POST /api/sheets/sync — re-read inventory from Google Sheets (never overwrite).
 // Soft-fails with HTTP 200 so the UI can still refresh drawer cards locally.
@@ -34,6 +35,17 @@ export async function POST(req: Request) {
     .filter((d) => canAccessDrawer(user.id, d.id))
     .map((d) => drawerView(d, db.stock.get(d.id)!))
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+
+  // Optional CellImage conversion — don't block the Refresh button on Apps Script.
+  if (result.ok && (result.photos ?? 0) === 0) {
+    after(() => {
+      void pullStockFromSheets({
+        force: true,
+        timeoutMs: 25000,
+        includePhotos: true,
+      });
+    });
+  }
 
   return NextResponse.json({ ...result, drawers });
 }

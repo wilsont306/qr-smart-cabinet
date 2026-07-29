@@ -74,19 +74,8 @@ const INK = "#1C2B4A";
 const fronts = ["#FFFDF8", "#F7F0DF", "#FBF6EC"];
 const borders = ["#E6DCC4", "#DFD3B6", "#E4DAC1"];
 
-/** Instant first paint — prefer last hydrated sheet snapshot, else placeholders. */
-function bootDrawers(): DrawerView[] {
-  try {
-    const raw = sessionStorage.getItem("cab_drawers_boot");
-    if (raw) {
-      const parsed = JSON.parse(raw) as DrawerView[];
-      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.label) {
-        return parsed;
-      }
-    }
-  } catch {
-    // ignore
-  }
+/** SSR-safe placeholders — never read sessionStorage here (hydration). */
+function placeholderDrawers(): DrawerView[] {
   return Array.from({ length: 9 }, (_, i) => ({
     id: `__boot_${i + 1}`,
     cabinet: "Cabinet A",
@@ -103,6 +92,21 @@ function bootDrawers(): DrawerView[] {
     quantity: 0,
     stockVersion: 0,
   }));
+}
+
+/** Client-only: last hydrated sheet snapshot for snappy paint after mount. */
+function readCachedDrawers(): DrawerView[] | null {
+  try {
+    const raw = sessionStorage.getItem("cab_drawers_boot");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as DrawerView[];
+    if (Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.label) {
+      return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
 }
 
 function cacheDrawersBoot(list: DrawerView[]) {
@@ -132,7 +136,7 @@ export default function DrawersPage() {
 function DrawersBoot() {
   const t = smartEspressoTheme;
   const accent = SMART_ACCENT;
-  const boot = bootDrawers();
+  const boot = placeholderDrawers();
   const rulerBg = `repeating-linear-gradient(180deg, ${t.line} 0px, ${t.line} 1.5px, transparent 1.5px, transparent 70px), repeating-linear-gradient(180deg, ${t.dot} 0px, ${t.dot} 1px, transparent 1px, transparent 14px)`;
   const dotBg = `radial-gradient(${t.dot} 1px, transparent 1.2px)`;
   return (
@@ -167,10 +171,11 @@ function DrawersPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const openParam = searchParams.get("open");
-  const [drawers, setDrawers] = useState<DrawerView[]>(() => bootDrawers());
+  const [drawers, setDrawers] = useState<DrawerView[]>(placeholderDrawers);
   const [ready, setReady] = useState(false);
+  const [cabinetGen, setCabinetGen] = useState(0);
   const [sheets, setSheets] = useState(false);
-  const [sessionName, setSessionName] = useState<string | null>(() => readCachedSessionName());
+  const [sessionName, setSessionName] = useState<string | null>(null);
   const [openIdx, setOpenIdx] = useState<number | null>(null);
   const [detailIdx, setDetailIdx] = useState<number | null>(null);
   const [detailPhase, setDetailPhase] = useState<DetailPhase>("idle");
@@ -227,6 +232,17 @@ function DrawersPageInner() {
     setReady(true);
     return result.drawers;
   }
+
+  // sessionStorage is client-only — restore after mount to avoid hydration mismatch.
+  useEffect(() => {
+    const cachedName = readCachedSessionName();
+    if (cachedName) setSessionName(cachedName);
+    const cachedDrawers = readCachedDrawers();
+    if (cachedDrawers) {
+      setDrawers(applyLockHold(cachedDrawers));
+      setReady(true);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -291,13 +307,11 @@ function DrawersPageInner() {
       user: {
         name: string;
         teamNumber?: string | null;
-        roboticsLevel?: string | null;
       } | null;
     }>("/api/auth/me").then(({ ok, data }) => {
       if (!ok || !data.user?.name) return;
       const team = data.user.teamNumber?.trim() ?? "";
-      const level = data.user.roboticsLevel?.trim() ?? "";
-      if (!/^\d{1,6}$/.test(team) || !["FTC", "FRC", "FLL"].includes(level)) {
+      if (!/^\d{1,6}$/.test(team)) {
         router.replace("/signin");
         return;
       }
@@ -305,7 +319,7 @@ function DrawersPageInner() {
       try {
         sessionStorage.setItem("cab_session_name", data.user.name);
         sessionStorage.setItem("cab_team_number", team);
-        sessionStorage.setItem("cab_robotics_level", level);
+        sessionStorage.removeItem("cab_robotics_level");
       } catch {
         // ignore
       }
@@ -439,10 +453,12 @@ function DrawersPageInner() {
           ) : (
             <div className={ready ? undefined : "smart-cabinet-boot"}>
               <CabinetStage
+                /* Remount on first ready + each Refresh so drawerIn cascades. */
+                key={ready ? `live-${cabinetGen}` : "boot"}
                 drawers={drawers}
                 accent={accent}
                 openIdx={openIdx}
-                stagger={ready ? 40 : 0}
+                stagger={ready ? 28 : 0}
                 rulerBg={rulerBg}
                 dotBg={dotBg}
                 line={t.line}
@@ -459,7 +475,10 @@ function DrawersPageInner() {
             centerAction={
               sheets ? (
                 <SyncButton
-                  onRefreshed={(next) => setDrawers(applyLockHold(next))}
+                  onRefreshed={(next) => {
+                    setDrawers(applyLockHold(next));
+                    setCabinetGen((g) => g + 1);
+                  }}
                   reload={loadCabinet}
                 />
               ) : undefined
@@ -550,7 +569,7 @@ function SyncButton({
     setTimeout(() => {
       setState("idle");
       setHint("");
-    }, 4200);
+    }, 1600);
   }
 
   return (

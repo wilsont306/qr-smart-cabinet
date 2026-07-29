@@ -882,10 +882,12 @@ export async function syncSheet(): Promise<{
   imageCol?: number | null;
 }> {
   if (!sheetsEnabled()) return { ok: false, error: "not_configured" };
+  // Light pull only — Sheets API already reads =IMAGE() / Photo URL cells.
+  // Blocking on Apps Script CellImage conversion made Refresh feel stuck (≤45s).
   const result = await pullStockFromSheets({
     force: true,
-    timeoutMs: 45000,
-    includePhotos: true,
+    timeoutMs: 12000,
+    includePhotos: false,
   });
   if (!result.ok) return { ok: false, error: result.error ?? "pull_failed" };
 

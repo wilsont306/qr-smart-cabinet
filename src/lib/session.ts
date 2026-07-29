@@ -144,7 +144,7 @@ export function createSession(userId: string) {
   return issueClaims({ userId, displayName: user.name });
 }
 
-/** Workshop tracker session — name + team # + FTC/FRC/FLL for the visit. */
+/** Workshop tracker session — name + team # for the visit. */
 export function createTrackerSession(
   displayName: string,
   opts?: { teamNumber?: string; roboticsLevel?: "FTC" | "FRC" | "FLL" },
@@ -161,9 +161,8 @@ export function createTrackerSession(
   if (!team) throw new Error("team_required");
 
   const level = opts?.roboticsLevel;
-  if (level !== "FTC" && level !== "FRC" && level !== "FLL") {
-    throw new Error("level_required");
-  }
+  const roboticsLevel =
+    level === "FTC" || level === "FRC" || level === "FLL" ? level : undefined;
 
   const trackerSessionId = crypto.randomUUID();
   const userId = `u_trk_${trackerSessionId.replace(/-/g, "").slice(0, 16)}`;
@@ -176,7 +175,7 @@ export function createTrackerSession(
     displayName: trimmed,
     trackerSessionId,
     teamNumber: team,
-    roboticsLevel: level,
+    roboticsLevel,
   });
 
   return {
@@ -185,7 +184,7 @@ export function createTrackerSession(
     trackerSessionId: claims.sid!,
     displayName: trimmed,
     teamNumber: team,
-    roboticsLevel: level,
+    roboticsLevel,
     userId,
   };
 }

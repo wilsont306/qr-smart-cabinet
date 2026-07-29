@@ -10,10 +10,7 @@ import {
 } from "@/components/smart-shell";
 import { api } from "@/lib/client";
 
-type Step = "name" | "team" | "level";
-type RoboticsLevel = "FTC" | "FRC" | "FLL";
-
-const LEVELS: RoboticsLevel[] = ["FTC", "FRC", "FLL"];
+type Step = "name" | "team";
 
 function safeNextPath(raw: string | null): string {
   if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/drawers";
@@ -30,7 +27,6 @@ export function SignInForm() {
   const [step, setStep] = useState<Step>("name");
   const [name, setName] = useState("");
   const [teamNumber, setTeamNumber] = useState("");
-  const [level, setLevel] = useState<RoboticsLevel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const t = smartEspressoTheme;
@@ -38,7 +34,6 @@ export function SignInForm() {
 
   const nameReady = name.trim().length > 0;
   const teamReady = /^\d{1,6}$/.test(teamNumber.trim());
-  const levelReady = level !== null;
 
   // Prefetch the cabinet route + warm serverless while they type.
   useEffect(() => {
@@ -47,8 +42,7 @@ export function SignInForm() {
     void fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" });
   }, [router]);
 
-  // Already fully checked in (name + team + level) — jump to the cabinet.
-  // Name-only / incomplete sessions must finish the new steps.
+  // Already fully checked in (name + team) — jump to the cabinet.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -56,14 +50,12 @@ export function SignInForm() {
         user: {
           name: string;
           teamNumber?: string | null;
-          roboticsLevel?: string | null;
         } | null;
       }>("/api/auth/me");
       if (cancelled || !ok || !data.user?.name) return;
 
       const team = data.user.teamNumber?.trim() ?? "";
-      const level = data.user.roboticsLevel?.trim() ?? "";
-      if (!/^\d{1,6}$/.test(team) || !["FTC", "FRC", "FLL"].includes(level)) {
+      if (!/^\d{1,6}$/.test(team)) {
         // Drop the incomplete cookie so Continue creates a full visit session.
         try {
           await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
@@ -76,7 +68,7 @@ export function SignInForm() {
       try {
         sessionStorage.setItem("cab_session_name", data.user.name);
         sessionStorage.setItem("cab_team_number", team);
-        sessionStorage.setItem("cab_robotics_level", level);
+        sessionStorage.removeItem("cab_robotics_level");
       } catch {
         // ignore
       }
@@ -101,20 +93,10 @@ export function SignInForm() {
     setStep("team");
   }
 
-  function goNextFromTeam(e: React.FormEvent) {
+  async function finishCheckIn(e: React.FormEvent) {
     e.preventDefault();
     if (!teamReady) {
       setError("Enter your team number (digits only).");
-      return;
-    }
-    setError(null);
-    setStep("level");
-  }
-
-  async function finishCheckIn(e: React.FormEvent) {
-    e.preventDefault();
-    if (!levelReady || !level) {
-      setError("Choose FTC, FRC, or FLL.");
       return;
     }
 
@@ -129,7 +111,6 @@ export function SignInForm() {
       body: JSON.stringify({
         name: trimmedName,
         teamNumber: trimmedTeam,
-        roboticsLevel: level,
       }),
     });
 
@@ -137,7 +118,7 @@ export function SignInForm() {
       try {
         sessionStorage.setItem("cab_session_name", trimmedName);
         sessionStorage.setItem("cab_team_number", trimmedTeam);
-        sessionStorage.setItem("cab_robotics_level", level);
+        sessionStorage.removeItem("cab_robotics_level");
         sessionStorage.setItem("cab_need_sheet_sync", "1");
       } catch {
         // ignore
@@ -161,17 +142,11 @@ export function SignInForm() {
           title: "Who’s checking in?",
           lead: "We’ll use your name to track what you take or return.",
         }
-      : step === "team"
-        ? {
-            kicker: "Team",
-            title: "What’s your team #?",
-            lead: "Enter the team number on your robot or badge.",
-          }
-        : {
-            kicker: "Program",
-            title: "Which program?",
-            lead: "Pick the FIRST program you’re competing in.",
-          };
+      : {
+          kicker: "Team",
+          title: "What’s your team #?",
+          lead: "Enter the team number on your robot or badge.",
+        };
 
   return (
     <div className="h-dvh overflow-hidden" style={{ background: t.bg }}>
@@ -193,8 +168,7 @@ export function SignInForm() {
               <p className="smart-signin-lead">{copy.lead}</p>
               <div className="smart-signin-steps" aria-hidden>
                 <span className={step === "name" ? "on" : "done"} />
-                <span className={step === "team" ? "on" : step === "level" ? "done" : ""} />
-                <span className={step === "level" ? "on" : ""} />
+                <span className={step === "team" ? "on" : ""} />
               </div>
             </div>
 
@@ -237,7 +211,7 @@ export function SignInForm() {
             )}
 
             {step === "team" && (
-              <form className="smart-signin-form" onSubmit={goNextFromTeam}>
+              <form className="smart-signin-form" onSubmit={finishCheckIn}>
                 <div className={`smart-signin-field${teamReady ? " filled" : ""}`}>
                   <label className="smart-signin-label" htmlFor="tracker-team">
                     Team #
@@ -268,6 +242,7 @@ export function SignInForm() {
                   <button
                     type="button"
                     className="smart-signin-back"
+                    disabled={working}
                     onClick={() => {
                       setError(null);
                       setStep("name");
@@ -278,58 +253,7 @@ export function SignInForm() {
                   <button
                     type="submit"
                     className="smart-signin-submit"
-                    disabled={!teamReady}
-                    style={{ background: accent }}
-                  >
-                    <span>Continue</span>
-                    <ArrowIcon />
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {step === "level" && (
-              <form className="smart-signin-form" onSubmit={finishCheckIn}>
-                <div className="smart-signin-levels" role="radiogroup" aria-label="Robotics level">
-                  {LEVELS.map((option) => {
-                    const selected = level === option;
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        className={`smart-signin-level${selected ? " selected" : ""}`}
-                        onClick={() => {
-                          setLevel(option);
-                          clearError();
-                        }}
-                        disabled={working}
-                      >
-                        {option}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {error && <p className="smart-signin-error">{error}</p>}
-
-                <div className="smart-signin-actions">
-                  <button
-                    type="button"
-                    className="smart-signin-back"
-                    disabled={working}
-                    onClick={() => {
-                      setError(null);
-                      setStep("team");
-                    }}
-                  >
-                    Back
-                  </button>
-                  <button
-                    type="submit"
-                    className="smart-signin-submit"
-                    disabled={working || !levelReady}
+                    disabled={working || !teamReady}
                     style={{ background: accent }}
                   >
                     <span>{working ? "Starting…" : "Continue"}</span>

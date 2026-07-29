@@ -8,12 +8,9 @@ import { pullStockFromSheets, sheetsEnabled } from "@/lib/sheets";
 interface TrackerBody {
   name?: unknown;
   teamNumber?: unknown;
-  roboticsLevel?: unknown;
 }
 
-const LEVELS = new Set(["FTC", "FRC", "FLL"]);
-
-// POST /api/auth/tracker — start a workshop visit session (name + team + level).
+// POST /api/auth/tracker — start a workshop visit session (name + team #).
 export async function POST(req: Request) {
   seed();
   const ip = clientIp(req);
@@ -43,21 +40,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid_team" }, { status: 400 });
   }
 
-  const roboticsLevel =
-    typeof body.roboticsLevel === "string" ? body.roboticsLevel.trim().toUpperCase() : "";
-  if (!LEVELS.has(roboticsLevel)) {
-    return NextResponse.json({ error: "invalid_level" }, { status: 400 });
-  }
-
   try {
-    const session = createTrackerSession(name, {
-      teamNumber,
-      roboticsLevel: roboticsLevel as "FTC" | "FRC" | "FLL",
-    });
+    const session = createTrackerSession(name, { teamNumber });
     audit({
       type: "auth.tracker_session",
       userId: session.userId,
-      detail: `${session.trackerSessionId} team_${session.teamNumber} ${session.roboticsLevel}`,
+      detail: `${session.trackerSessionId} team_${session.teamNumber}`,
     });
 
     const res = NextResponse.json({
@@ -68,7 +56,7 @@ export async function POST(req: Request) {
         name: session.displayName,
         email: "",
         teamNumber: session.teamNumber,
-        roboticsLevel: session.roboticsLevel,
+        roboticsLevel: session.roboticsLevel ?? null,
       },
     });
     res.cookies.set(setSessionCookie(session.token, session.maxAge));
